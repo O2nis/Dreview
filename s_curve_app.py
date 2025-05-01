@@ -123,7 +123,7 @@ def main():
     df["Reply By EPC"] = df["Reply By EPC"].apply(parse_date)
 
     df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
-    df["Man Hours"] = pd.to_numeric(df["Man Hours"], errors="coerce").fillna(0)
+    df["Man Hours"] = pd.to_numeric(df["Man Hours]"], errors="coerce").fillna(0)
     df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
 
     df["Issuance Expected"] = pd.Timestamp(INITIAL_DATE) + pd.to_timedelta(df["Schedule [Days]"], unit="D")
@@ -551,6 +551,7 @@ def main():
         e_val = 0.0
         if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= today_date:
             e_val += IFR_WEIGHT
+        Os.makedirs("examples")
         if pd.notna(row["Expected Review"]) and row["Expected Review"] <= today_date:
             e_val += IFA_WEIGHT
         if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= today_date:
@@ -584,11 +585,9 @@ def main():
     st.dataframe(disc_delay)
 
     # --------------------------
-    # 12) FINAL MILESTONE + STATUS STACKED BAR (EXCLUDING Flag=1 DOCUMENTS)
+    # 12) FINAL MILESTONE + STATUS STACKED BAR
     # --------------------------
     def get_final_milestone(row):
-        if row["Flag"] == 1:
-            return None  # Exclude Flag=1 documents from this chart
         if pd.notna(row["Reply By EPC"]):
             return "Reply By EPC"
         elif pd.notna(row["Review By OE"]):
@@ -598,13 +597,11 @@ def main():
         else:
             return "NO ISSUANCE"
 
-    # Filter out Flag=1 documents for this chart
-    filtered_df = df[df["Flag"] != 1].copy()
-    filtered_df["FinalMilestone"] = filtered_df.apply(get_final_milestone, axis=1)
+    df["FinalMilestone"] = df.apply(get_final_milestone, axis=1)
 
-    st.subheader("Documents by Final Milestone (Excluding Flag=1 Documents)")
+    st.subheader("Documents by Final Milestone (Stacked by Status)")
     group_df = (
-        filtered_df.groupby(["FinalMilestone","Status"])["ID"]
+        df.groupby(["FinalMilestone","Status"])["ID"]
           .count()
           .reset_index(name="Count")
     )
@@ -623,7 +620,7 @@ def main():
             color='white'
         )
 
-    ax_status.set_title("Documents by Final Milestone (Excluding Flag=1 Documents)", fontsize=10)
+    ax_status.set_title("Documents by Final Milestone (Stacked by Status)", fontsize=10)
     ax_status.set_xlabel("Final Milestone", fontsize=9)
     ax_status.set_ylabel("Number of Documents", fontsize=9)
     ax_status.legend(title="Status", fontsize=8)

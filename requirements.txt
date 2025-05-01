@@ -6,3 +6,4 @@ thefuzz
 chardet
 openpyxl
 seaborn
+chrono

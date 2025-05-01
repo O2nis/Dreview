@@ -584,10 +584,12 @@ def main():
     st.dataframe(disc_delay)
 
     # --------------------------
-    # 12) FINAL MILESTONE + STATUS STACKED BAR
+    # 12) FINAL MILESTONE + STATUS STACKED BAR (EXCLUDING Flag=1 DOCUMENTS)
     # --------------------------
     def get_final_milestone(row):
-        if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
+        if row["Flag"] == 1:
+            return None  # Exclude Flag=1 documents from this chart
+        if pd.notna(row["Reply By EPC"]):
             return "Reply By EPC"
         elif pd.notna(row["Review By OE"]):
             return "Review By OE"
@@ -596,11 +598,13 @@ def main():
         else:
             return "NO ISSUANCE"
 
-    df["FinalMilestone"] = df.apply(get_final_milestone, axis=1)
+    # Filter out Flag=1 documents for this chart
+    filtered_df = df[df["Flag"] != 1].copy()
+    filtered_df["FinalMilestone"] = filtered_df.apply(get_final_milestone, axis=1)
 
-    st.subheader("Documents by Final Milestone (Stacked by Status)")
+    st.subheader("Documents by Final Milestone (Excluding Flag=1 Documents)")
     group_df = (
-        df.groupby(["FinalMilestone","Status"])["ID"]
+        filtered_df.groupby(["FinalMilestone","Status"])["ID"]
           .count()
           .reset_index(name="Count")
     )
@@ -619,7 +623,7 @@ def main():
             color='white'
         )
 
-    ax_status.set_title("Documents by Final Milestone (Stacked by Status)", fontsize=10)
+    ax_status.set_title("Documents by Final Milestone (Excluding Flag=1 Documents)", fontsize=10)
     ax_status.set_xlabel("Final Milestone", fontsize=9)
     ax_status.set_ylabel("Number of Documents", fontsize=9)
     ax_status.legend(title="Status", fontsize=8)

@@ -2,254 +2,203 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import datetime as dt
-import numpy as np
-from io import BytesIO
-import openpyxl
+from datetime import datetime, timedelta
+import chrono
+import io
+import re
 
-def parse_date(d):
-    """Robust date parsing for document register format, including Excel serial dates."""
-    if pd.isna(d) or d in ['', '0-Jan-00', '########']:
-        return pd.NaT
-    if isinstance(d, (int, float)):  # Handle Excel serial dates
-        try:
-            return pd.to_datetime(d, unit='D', origin='1899-12-30', errors='coerce')
-        except:
-            return pd.NaT
+# Function to safely parse dates
+def parse_date(date_str):
+    if pd.isna(date_str) or date_str == '':
+        return None
     try:
-        return pd.to_datetime(d, format='%d-%b-%y', errors='coerce')
+        parsed = chrono.parse_date(str(date_str))
+        return parsed if parsed else None
     except:
-        return pd.to_datetime(d, errors='coerce', dayfirst=True)
+        return None
 
-def calculate_document_progress(df, today):
-    """
-    Calculate progress percentages for each document based on milestones.
-    Returns: DataFrame with progress columns added.
-    """
-    # Calculate progress at each milestone (0% if NaT or future date)
-    df['progress_upload'] = (df['Date Data Upload by EPC'].notna() & 
-                           (df['Date Data Upload by EPC'] <= today)).astype(int) * 0.25
-    df['progress_review'] = (df['Actual Fichtner Review'].notna() & 
-                           (df['Actual Fichtner Review'] <= today)).astype(int) * 0.25
-    df['progress_reply'] = (df['Actual EPC reply Date'].notna() & 
-                          (df['Actual EPC reply Date'] <= today)).astype(int) * 0.25
-    df['progress_final'] = (df['Final Issuance'].notna() & 
-                          (df['Final Issuance'] <= today)).astype(int) * 0.25
-    
-    # Calculate total actual progress
-    df['actual_progress'] = (df['progress_upload'] + df['progress_review'] + 
-                           df['progress_reply'] + df['progress_final']) * df['Weight']
-    
-    return df
+# Function to verify column by partial name
+def find_column_index(columns, patterns):
+    for pattern in patterns:
+        for i, col in enumerate(columns):
+            if re.search(pattern, str(col), re.IGNORECASE):
+                return i
+    return None
 
-def generate_s_curve(df, start_date, review_days=10, final_days=10):
-    """Generate S-curve data for planned vs actual progress."""
-    today = pd.to_datetime('2025-05-01')  # Fixed as per instruction
-    
-    # Calculate planned dates
-    if 'Planned Issuance date' in df.columns and df['Planned Issuance date'].notna().any():
-        df['Planned_Review'] = df['Planned Issuance date'] + pd.Timedelta(days=review_days)
-        df['Planned_Reply'] = df['Planned_Review'] + pd.Timedelta(days=final_days / 2)
-        df['Planned_Final'] = df['Planned_Reply'] + pd.Timedelta(days=final_days / 2)
-    else:
-        st.error("Missing or empty 'Planned Issuance date' column.")
-        return None, None, today
-    
-    # Get all relevant dates
+# Function to process CSV and calculate S-curves
+def process_data(df, start_date, review_days, final_issuance_days, today):
+    # Verify CSV has enough columns
+    if len(df.columns) < 23:
+        raise ValueError("CSV must have at least 23 columns (up to column W).")
+
+    # Define column indices (0-based)
+    col_indices = {
+        'planned': 18,  # Column S
+        'actual_issuance': 19,  # Column T
+        'review': 20,  # Column U
+        'reply': 21,  # Column V
+        'final_issuance': 22,  # Column W
+        'weight': 14  # Column O
+    }
+
+    # Verify columns with partial name matching
+    expected_patterns = {
+        'planned': [r'planned.*issuance'],
+        'actual_issuance': [r'date.*data.*upload', r'actual.*issuance'],
+        'review': [r'actual.*fichtner.*review', r'review.*date'],
+        'reply': [r'actual.*epc.*reply', r'reply.*date'],
+        'final_issuance': [r'final.*issuance'],
+        'weight': [r'weight']
+    }
+    for key, index in col_indices.items():
+        col_name = df.columns[index]
+        patterns = expected_patterns[key]
+        if not any(re.search(p, str(col_name), re.IGNORECASE) for p in patterns):
+            st.warning(f"Column {col_name} at index {index} may not match expected {key} column.")
+
+    # Create a mapping of column indices to data
     date_columns = [
-        'Planned Issuance date', 'Planned_Review', 'Planned_Reply', 'Planned_Final',
-        'Date Data Upload by EPC', 'Actual Fichtner Review', 
-        'Actual EPC reply Date', 'Final Issuance'
+        ('planned', col_indices['planned']),
+        ('actual_issuance', col_indices['actual_issuance']),
+        ('review', col_indices['review']),
+        ('reply', col_indices['reply']),
+        ('final_issuance', col_indices['final_issuance'])
     ]
-    
-    all_dates = set()
-    for col in date_columns:
-        if col in df.columns:
-            valid_dates = df[col].dropna()
-            if valid_dates.empty:
-                st.warning(f"No valid dates in '{col}'")
-            all_dates.update(valid_dates)
-    
-    if not all_dates:
-        st.error("No valid dates found for S-curve.")
-        return None, None, today
-    
-    all_dates = sorted(all_dates)
-    total_weight = df['Weight'].sum()
-    
-    # Calculate cumulative progress
-    planned_progress = []
-    actual_progress = []
-    
-    for date in all_dates:
-        # Planned progress
-        planned_upload = df[df['Planned Issuance date'] <= date]['Weight'].sum() if 'Planned Issuance date' in df.columns else 0
-        planned_review = df[df['Planned_Review'] <= date]['Weight'].sum() if 'Planned_Review' in df.columns else 0
-        planned_reply = df[df['Planned_Reply'] <= date]['Weight'].sum() if 'Planned_Reply' in df.columns else 0
-        planned_final = df[df['Planned_Final'] <= date]['Weight'].sum() if 'Planned_Final' in df.columns else 0
-        planned_value = (planned_upload * 0.25 + planned_review * 0.25 + 
-                        planned_reply * 0.25 + planned_final * 0.25) / total_weight * 100
-        planned_progress.append(planned_value)
-        
-        # Actual progress
-        if date > today:
-            actual_progress.append(np.nan)
-        else:
-            actual_upload = df[df['Date Data Upload by EPC'] <= date]['Weight'].sum() if 'Date Data Upload by EPC' in df.columns else 0
-            actual_review = df[df['Actual Fichtner Review'] <= date]['Weight'].sum() if 'Actual Fichtner Review' in df.columns else 0
-            actual_reply = df[df['Actual EPC reply Date'] <= date]['Weight'].sum() if 'Actual EPC reply Date' in df.columns else 0
-            actual_final = df[df['Final Issuance'] <= date]['Weight'].sum() if 'Final Issuance' in df.columns else 0
-            actual_value = (actual_upload * 0.25 + actual_review * 0.25 + 
-                           actual_reply * 0.25 + actual_final * 0.25) / total_weight * 100
-            actual_progress.append(actual_value)
-    
-    progress_df = pd.DataFrame({
-        'Date': all_dates,
-        'Planned': planned_progress,
-        'Actual': actual_progress
-    }).sort_values('Date')
-    
-    return progress_df, total_weight, today
 
-def plot_s_curve(progress_df, total_weight, today):
-    """Create the S-curve visualization."""
-    fig, ax = plt.subplots(figsize=(12, 6))
+    # Parse dates
+    for _, col_idx in date_columns:
+        df.iloc[:, col_idx] = df.iloc[:, col_idx].apply(parse_date)
+    
+    # Handle weights
+    df['Weight'] = df.iloc[:, col_indices['weight']].apply(
+        lambda x: 1.0 if pd.isna(x) or x == '' else float(x)
+    )
+    total_weight = df['Weight'].sum() * 4  # Each document has 4 milestones
+    
+    # Actual S-curve: Count completed milestones up to today
+    actual_data = []
+    dates = []
+    for _, row in df.iterrows():
+        weight_per_milestone = row['Weight'] / 4
+        for col_key, col_idx in date_columns[1:]:  # Skip planned
+            date = row.iloc[col_idx]
+            if date and date <= today:
+                dates.append((date, weight_per_milestone))
+    
+    # Sort dates and calculate cumulative progress
+    dates.sort(key=lambda x: x[0])
+    actual_cumulative = []
+    cum_weight = 0
+    last_date = start_date
+    for date, weight in dates:
+        if date > today:
+            break
+        if date > last_date:
+            actual_cumulative.append((last_date, cum_weight / total_weight * 100))
+            last_date = date
+        cum_weight += weight
+    actual_cumulative.append((min(today, last_date), cum_weight / total_weight * 100))
+    
+    # Planned S-curve
+    planned_data = []
+    for _, row in df.iterrows():
+        weight_per_milestone = row['Weight'] / 4
+        planned_date = row.iloc[col_indices['planned']]
+        if planned_date:
+            # Issuance
+            planned_data.append((planned_date, weight_per_milestone))
+            # Review
+            review_date = planned_date + timedelta(days=review_days)
+            planned_data.append((review_date, weight_per_milestone))
+            # Reply (midpoint approximation)
+            reply_date = planned_date + timedelta(days=review_days + final_issuance_days / 2)
+            planned_data.append((reply_date, weight_per_milestone))
+            # Final issuance
+            final_date = planned_date + timedelta(days=review_days + final_issuance_days)
+            planned_data.append((final_date, weight_per_milestone))
+    
+    # Sort and calculate cumulative
+    planned_data.sort(key=lambda x: x[0])
+    planned_cumulative = []
+    cum_weight = 0
+    last_date = start_date
+    for date, weight in planned_data:
+        if date > last_date:
+            planned_cumulative.append((last_date, cum_weight / total_weight * 100))
+            last_date = date
+        cum_weight += weight
+    planned_cumulative.append((last_date, cum_weight / total_weight * 100))
+    
+    # Find delay at today
+    actual_progress = actual_cumulative[-1][1] if actual_cumulative else 0
+    planned_at_today = next((p for d, p in planned_cumulative if d >= today), planned_cumulative[-1][1])
+    delay = planned_at_today - actual_progress
+    
+    return actual_cumulative, planned_cumulative, delay
+
+# Plot S-curve
+def plot_s_curves(actual_data, planned_data, today, delay, expected_end_date):
+    fig, ax = plt.subplots(figsize=(10, 6))
     
     # Plot curves
-    ax.plot(progress_df['Date'], progress_df['Planned'], label='Planned', color='#1f77b4', linewidth=2)
-    ax.plot(progress_df['Date'], progress_df['Actual'], label='Actual', color='#ff7f0e', linewidth=2)
+    if actual_data:
+        dates, values = zip(*actual_data)
+        ax.plot(dates, values, label='Actual Progress', color='blue')
     
-    # Add today line
-    ax.axvline(today, color='#d62728', linestyle='--', linewidth=1.5, label='Today')
+    if planned_data:
+        dates, values = zip(*planned_data)
+        ax.plot(dates, values, label='Planned Progress', color='green')
     
-    # Add end date line
-    end_date = progress_df['Date'].max()
-    ax.axvline(end_date, color='#2ca02c', linestyle='--', linewidth=1.5, label='Expected End')
+    # Add vertical lines
+    ax.axvline(x=today, color='red', linestyle='--', label=f'Today ({today.strftime("%b %d, %Y")})')
+    ax.axvline(x=expected_end_date, color='purple', linestyle='--', 
+               label=f'Expected End ({expected_end_date.strftime("%b %d, %Y")})')
     
-    # Calculate delay
-    last_actual = progress_df[progress_df['Actual'].notna()]['Actual'].iloc[-1]
-    # Convert dates to numeric for interpolation
-    date_numeric = pd.to_numeric(progress_df['Date'].astype('datetime64[ns]'))
-    today_numeric = pd.to_numeric(today.astype('datetime64[ns]'))
-    planned_today = np.interp(today_numeric, date_numeric, progress_df['Planned'])
-    delay = planned_today - last_actual
-    
-    # Add delay annotation
-    ax.annotate(
-        f"Delay: {delay:.1f}%",
-        xy=(today, (last_actual + planned_today)/2),
-        xytext=(10, 0),
-        textcoords="offset points",
-        color='#d62728',
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
-        arrowprops=dict(arrowstyle="->", color='#d62728')
-    )
-    
-    # Formatting
-    ax.set_title(f'Document Progress S-Curve (Total Weight: {total_weight:.1f})')
+    # Customize plot
     ax.set_xlabel('Date')
     ax.set_ylabel('Progress (%)')
+    ax.set_title(f'S-Curve: Actual vs Planned (Delay: {delay:.2f}%)')
     ax.legend()
     ax.grid(True)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%b-%Y'))
+    
+    # Format x-axis dates
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
     plt.xticks(rotation=45)
+    
     plt.tight_layout()
     
-    return fig
+    # Save to bytes buffer
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    return buf
 
-def main():
-    st.set_page_config(page_title="Document S-Curve Analysis", layout="wide")
-    st.title("📊 Document Register S-Curve Analysis")
-    
-    # File upload
-    uploaded_file = st.file_uploader("Upload Document Register Excel", type=['xlsx', 'xls'])
-    
-    if uploaded_file is None:
-        st.info("Please upload your document register file")
-        return
-    
-    # Load and process data
+# Streamlit app
+st.title('Document Register S-Curve')
+
+# User inputs
+start_date = st.date_input('Start Date', value=datetime(2024, 8, 1))
+review_days = st.number_input('Review Days', min_value=1, value=10)
+final_issuance_days = st.number_input('Final Issuance Days', min_value=1, value=10)
+
+# Read CSV
+csv_content = st.file_uploader('Upload CSV', type='csv')
+if csv_content:
     try:
-        df = pd.read_excel(uploaded_file, engine='openpyxl')
+        df = pd.read_csv(csv_content)
         
-        # Standardize column names
-        df.columns = df.columns.str.strip()
+        # Process data
+        today = datetime(2025, 5, 1)
+        actual_data, planned_data, delay = process_data(df, start_date, review_days, final_issuance_days, today)
         
-        # Map column names
-        col_mapping = {
-            'Planned Issuance date': ['Planned Issuance date', 'Planned Issuance'],
-            'Date Data Upload by EPC': ['Date Data Upload by EPC', 'Actual Upload'],
-            'Actual Fichtner Review': ['Actual Fichtner Review', 'Fichtner Review'],
-            'Actual EPC reply Date': ['Actual EPC reply Date', 'EPC reply Date'],
-            'Final Issuance': ['Final Issuance', 'Final Issuance Date'],
-            'Weight': ['Weight', 'Document Weight']
-        }
+        # Find expected end date
+        expected_end_date = max([d for d, _ in planned_data], default=today)
         
-        for standard_name, possible_names in col_mapping.items():
-            for name in possible_names:
-                if name in df.columns:
-                    df.rename(columns={name: standard_name}, inplace=True)
-                    break
-        
-        # Convert date columns
-        date_cols = [
-            'Planned Issuance date',
-            'Date Data Upload by EPC',
-            'Actual Fichtner Review',
-            'Actual EPC reply Date',
-            'Final Issuance'
-        ]
-        
-        for col in date_cols:
-            if col in df.columns:
-                df[col] = df[col].apply(parse_date)
-                if df[col].isna().all() and not df[col].empty:
-                    st.warning(f"No valid dates in '{col}'. All values: {df[col].unique()}")
-        
-        # Handle weights
-        if 'Weight' not in df.columns:
-            df['Weight'] = 1
-        else:
-            df['Weight'] = pd.to_numeric(df['Weight'], errors='coerce').fillna(1)
-        
+        # Plot and display
+        buf = plot_s_curves(actual_data, planned_data, today, delay, expected_end_date)
+        st.image(buf)
     except Exception as e:
-        st.error(f"Error loading file: {str(e)}")
-        return
-    
-    # Configuration
-    st.sidebar.header("Settings")
-    start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime('2025-01-01'))
-    review_days = st.sidebar.number_input("Review Duration (days)", min_value=1, value=10)
-    final_days = st.sidebar.number_input("Final Issuance Duration (days)", min_value=1, value=10)
-    
-    # Calculate progress
-    df = calculate_document_progress(df, today=pd.to_datetime('2025-05-01'))
-    progress_df, total_weight, today = generate_s_curve(df, start_date, review_days, final_days)
-    
-    if progress_df is None:
-        st.error("Could not generate S-curve - check your date columns")
-        return
-    
-    # Display S-curve
-    st.subheader("Document Progress S-Curve")
-    fig = plot_s_curve(progress_df, total_weight, today)
-    st.pyplot(fig)
-    
-    # Display current status
-    last_actual = progress_df[progress_df['Actual'].notna()]['Actual'].iloc[-1]
-    date_numeric = pd.to_numeric(progress_df['Date'].astype('datetime64[ns]'))
-    today_numeric = pd.to_numeric(today.astype('datetime64[ns]'))
-    planned_today = np.interp(today_numeric, date_numeric, progress_df['Planned'])
-    delay = planned_today - last_actual
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Actual Progress", f"{last_actual:.1f}%")
-    col2.metric("Planned Progress", f"{planned_today:.1f}%")
-    col3.metric("Delay", f"{delay:.1f}%", delta_color="inverse")
-    
-    # Show data table
-    if st.checkbox("Show progress data"):
-        st.dataframe(progress_df)
-
-if __name__ == "__main__":
-    main()
+        st.error(f"Error processing CSV: {str(e)}")
+else:
+    st.write('Please upload a CSV file.')

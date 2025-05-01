@@ -7,13 +7,19 @@ import chrono
 import io
 import re
 
-# Function to safely parse dates
+# Function to safely parse dates and ensure datetime.datetime
 def parse_date(date_str):
     if pd.isna(date_str) or date_str == '':
         return None
     try:
         parsed = chrono.parse_date(str(date_str))
-        return parsed if parsed else None
+        if parsed:
+            # Ensure parsed date is datetime.datetime
+            if isinstance(parsed, datetime):
+                return parsed
+            elif isinstance(parsed, date):
+                return datetime.combine(parsed, datetime.min.time())
+        return None
     except:
         return None
 
@@ -181,6 +187,9 @@ st.title('Document Register S-Curve')
 start_date = st.date_input('Start Date', value=datetime(2024, 8, 1))
 review_days = st.number_input('Review Days', min_value=1, value=10)
 final_issuance_days = st.number_input('Final Issuance Days', min_value=1, value=10)
+
+# Convert start_date to datetime.datetime
+start_date = datetime.combine(start_date, datetime.min.time())
 
 # Read CSV
 csv_content = st.file_uploader('Upload CSV', type='csv')

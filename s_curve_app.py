@@ -6,7 +6,6 @@ import datetime as dt
 import numpy as np
 import seaborn as sns
 from cycler import cycler
-import uuid
 
 plt.rcParams.update({'font.size': 8})
 
@@ -121,7 +120,7 @@ def main():
 
     df["Issued By EPC"] = df["Issued By EPC"].apply(parse_date)
     df["Review By OE"] = df["Review By OE"].apply(parse_date)
-    df["Reply By EPC"] = df["Reply By CPC"].apply(parse_date)
+    df["Reply By EPC"] = df["Reply By EPC"].apply(parse_date)
 
     df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
     df["Man Hours"] = pd.to_numeric(df["Man Hours"], errors="coerce").fillna(0)
@@ -511,70 +510,7 @@ def main():
         st.pyplot(fig_ifr)
 
     # --------------------------
-    # 10) NEW: ACTUAL vs EXPECTED HOURS BY AREA
-    # --------------------------
-    by_area = df.groupby("Area")[["Actual_Progress_At_Final","Expected_Progress_At_Final"]].sum()
-    
-    if PERCENTAGE_VIEW:
-        by_area["Actual_Progress_At_Final"] = by_area["Actual_Progress_At_Final"] / total_mh * 100
-        by_area["Expected_Progress_At_Final"] = by_area["Expected_Progress_At_Final"] / total_mh * 100
-        y_label_area = "Percentage of Total Man-Hours"
-    else:
-        y_label_area = "Cumulative Hours"
-
-    st.subheader("Actual vs. Expected Hours by Area")
-    fig_area, ax_area = plt.subplots(figsize=(8,5))
-    x_area = range(len(by_area.index))
-    width = 0.35
-
-    ax_area.bar(
-        [i - width/2 for i in x_area],
-        by_area["Actual_Progress_At_Final"],
-        width=width,
-        label='Actual Hours'
-    )
-    ax_area.bar(
-        [i + width/2 for i in x_area],
-        by_area["Expected_Progress_At_Final"],
-        width=width,
-        label='Expected Hours'
-    )
-
-    ax_area.set_title("Actual vs. Expected Hours by Area", fontsize=10)
-    ax_area.set_xlabel("Area", fontsize=9)
-    ax_area.set_ylabel(y_label_area, fontsize=9)
-    ax_area.set_xticks(ticks=x_area)
-    ax_area.set_xticklabels(by_area.index, rotation=45, ha='right', fontsize=8)
-    ax_area.legend(fontsize=8)
-    plt.tight_layout()
-    st.pyplot(fig_area)
-
-    # --------------------------
-    # 11) NEW: DONUT CHART FOR TOTAL DOCUMENTS vs FLAG=1
-    # --------------------------
-    flag_1_count = df[df["Flag"] == 1]["ID"].count()
-    total_docs = len(df)
-    flag_values = [flag_1_count, total_docs - flag_1_count]
-
-    st.subheader("Documents with Final Issuance (Flag=1) Status")
-    fig_flag, ax_flag = plt.subplots(figsize=(4,4))
-    def flag_autopct(pct):
-        total_count = sum(flag_values)
-        docs = int(round(pct * total_count / 100.0))
-        return f"{docs} docs" if docs > 0 else ""
-
-    ax_flag.pie(
-        flag_values,
-        labels=["Final (Flag=1)", "Not Final"],
-        autopct=flag_autopct,
-        startangle=140,
-        wedgeprops={"width":0.4}
-    )
-    ax_flag.set_title("Documents with Final Issuance Status", fontsize=9)
-    st.pyplot(fig_flag)
-
-    # --------------------------
-    # 12) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
+    # 10) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
     # --------------------------
     df["Issued_bool"] = df["Issued By EPC"].notna().astype(int)
     df["Review_bool"] = df["Review By OE"].notna().astype(int)
@@ -585,7 +521,7 @@ def main():
     st.subheader("Number of Docs with Issued, Review, Reply by Discipline")
     fig4, ax4 = plt.subplots(figsize=(8,5))
     disc_counts.plot(kind="barh", stacked=True, ax=ax4)
-    ax en.set_xlabel("Count of Documents", fontsize=9)
+    ax4.set_xlabel("Count of Documents", fontsize=9)
     ax4.set_ylabel("Discipline", fontsize=9)
     ax4.set_title("Document Milestone Status by Discipline", fontsize=10)
     plt.xticks(fontsize=8)
@@ -596,7 +532,7 @@ def main():
     st.pyplot(fig4)
 
     # --------------------------
-    # 13) DELAY BY DISCIPLINE (AS OF TODAY)
+    # 11) DELAY BY DISCIPLINE (AS OF TODAY)
     # --------------------------
     st.subheader("Delay Percentage by Discipline (As of Today)")
 
@@ -648,10 +584,10 @@ def main():
     st.dataframe(disc_delay)
 
     # --------------------------
-    # 14) FINAL MILESTONE + STATUS STACKED BAR (MODIFIED)
+    # 12) FINAL MILESTONE + STATUS STACKED BAR
     # --------------------------
     def get_final_milestone(row):
-        if pd.notna(row["Reply By EPC"]):
+        if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
             return "Reply By EPC"
         elif pd.notna(row["Review By OE"]):
             return "Review By OE"
@@ -669,7 +605,7 @@ def main():
           .reset_index(name="Count")
     )
     pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
-    pivoted = pivoted.reindex(["Issued By EPC","Review By OE","Reply By EPC","NO ISSUANCE"]).dropna(how="all")
+    pivoted = pivoted.reindex(["Issued By EPC","Review By OE","Reply By EPC"]).dropna(how="all")
 
     fig_status, ax_status = plt.subplots(figsize=(7,5))
     pivoted.plot(kind="bar", stacked=True, ax=ax_status)
@@ -692,7 +628,7 @@ def main():
     st.pyplot(fig_status)
 
     # --------------------------
-    # 15) SAVE UPDATED CSV
+    # 13) SAVE UPDATED CSV
     # --------------------------
     df["Issuance Expected"] = pd.to_datetime(df["Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
     df["Expected Review"] = pd.to_datetime(df["Expected Review"], errors="coerce").dt.strftime("%d-%b-%y")

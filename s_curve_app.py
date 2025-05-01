@@ -44,7 +44,6 @@ def load_data(uploaded_file):
             
             # If there are still NaTs and the column has numeric values, try Excel serial dates
             if df[col].isna().any() and pd.api.types.is_numeric_dtype(df[col]):
-                # Convert numeric values to datetime (Excel serial dates)
                 mask = df[col].notna() & df[col].apply(lambda x: isinstance(x, (int, float)))
                 df.loc[mask, col] = pd.to_datetime(df.loc[mask, col], unit='D', origin='1899-12-30', errors='coerce')
             
@@ -66,78 +65,70 @@ def load_data(uploaded_file):
 
 def calculate_curves(df, review_days, final_days):
     """Calculate planned and actual progress curves"""
-    today = datetime(2025, 5, 1)  # Fixed as per original instruction
+    today = datetime(2025, 5, 1)  # Fixed as per instruction
     
-    # Calculate planned dates only if we have the required columns
-    if 'Planned Issuance date' in df.columns:
-        df['Planned_Review'] = df['Planned Issuance date'] + timedelta(days=review_days)
-        df['Planned_Final'] = df['Planned_Review'] + timedelta(days=final_days)
-    else:
-        st.error("Missing 'Planned Issuance date' column in data")
-        return pd.DataFrame(), today
-    
-    # Get all unique dates from both curves
+    # Initialize variables
+    total_weight = df['Weight'].sum()
     all_dates = set()
     
-    # Planned dates
-    planned_dates = []
-    planned_dates.extend(df['Planned Issuance date'].dropna().tolist())
-    planned_dates.extend(df['Planned_Review'].dropna().tolist())
-    planned_dates.extend(df['Planned_Final'].dropna().tolist())
-    all_dates.update(planned_dates)
+    # Calculate planned dates
+    if 'Planned Issuance date' in df.columns and df['Planned Issuance date'].notna().any():
+        df['Planned_Review'] = df['Planned Issuance date'] + timedelta(days=review_days)
+        df['Planned_Final'] = df['Planned_Review'] + timedelta(days=final_days)
+        
+        # Collect planned dates
+        planned_dates = []
+        for col in ['Planned Issuance date', 'Planned_Review', 'Planned_Final']:
+            valid_dates = df[col].dropna().tolist()
+            if not valid_dates:
+                st.warning(f"No valid dates found in '{col}' for planned S-curve")
+            planned_dates.extend(valid_dates)
+        all_dates.update(planned_dates)
+    else:
+        st.error("Missing or empty 'Planned Issuance date' column. Cannot calculate planned S-curve.")
+        return pd.DataFrame(), today
     
-    # Actual dates - only include columns that exist
+    # Collect actual dates
     actual_dates = []
-    if 'Date Data Upload by EPC' in df.columns:
-        actual_dates.extend(df['Date Data Upload by EPC'].dropna().tolist())
-    if 'Actual Fichtner Review' in df.columns:
-        actual_dates.extend(df['Actual Fichtner Review'].dropna().tolist())
-    if 'Actual EPC reply Date' in df.columns:
-        actual_dates.extend(df['Actual EPC reply Date'].dropna().tolist())
-    if 'Final Issuance' in df.columns:
-        actual_dates.extend(df['Final Issuance'].dropna().tolist())
+    actual_cols = ['Date Data Upload by EPC', 'Actual Fichtner Review', 
+                   'Actual EPC reply Date', 'Final Issuance']
+    for col in actual_cols:
+        if col in df.columns and df[col].notna().any():
+            valid_dates = df[df[col] <= today][col].dropna().tolist()
+            if not valid_dates:
+                st.warning(f"No valid dates found in '{col}' up to today for actual S-curve")
+            actual_dates.extend(valid_dates)
+        else:
+            st.warning(f"Column '{col}' missing or empty for actual S-curve")
     all_dates.update(actual_dates)
     
+    # Handle case where no valid dates are found
+    if not all_dates:
+        st.error("No valid dates found for planned or actual S-curves. Please check your data.")
+        return pd.DataFrame(), today
+    
     # Convert to sorted list
-    all_dates = sorted([d for d in all_dates if pd.notnull(d)])
+    all_dates = sorted(all_dates)
     
     # Calculate cumulative progress for planned curve
     planned_progress = []
-    total_weight = df['Weight'].sum()
-    
     for date in all_dates:
-        # Count documents that have reached each milestone by this date
-        uploaded = df[df['Planned Issuance date'] <= date]['Weight'].sum()
-        reviewed = df[df['Planned_Review'] <= date]['Weight'].sum()
-        finalized = df[df['Planned_Final'] <= date]['Weight'].sum()
-        
-        # Each milestone is worth part of the document's weight
+        uploaded = df[df['Planned Issuance date'] <= date]['Weight'].sum() if 'Planned Issuance date' in df.columns else 0
+        reviewed = df[df['Planned_Review'] <= date]['Weight'].sum() if 'Planned_Review' in df.columns else 0
+        finalized = df[df['Planned_Final'] <= date]['Weight'].sum() if 'Planned_Final' in df.columns else 0
         progress = (uploaded * 0.25 + reviewed * 0.25 + finalized * 0.5) / total_weight * 100
         planned_progress.append(progress)
     
     # Calculate cumulative progress for actual curve
     actual_progress = []
-    
     for date in all_dates:
         if date > today:
-            # Future dates shouldn't be counted in actual progress
             actual_progress.append(np.nan)
             continue
-            
-        # Initialize progress components
-        uploaded = reviewed = replied = finalized = 0
-        
-        # Count documents that have reached each milestone by this date
-        if 'Date Data Upload by EPC' in df.columns:
-            uploaded = df[df['Date Data Upload by EPC'] <= date]['Weight'].sum()
-        if 'Actual Fichtner Review' in df.columns:
-            reviewed = df[df['Actual Fichtner Review'] <= date]['Weight'].sum()
-        if 'Actual EPC reply Date' in df.columns:
-            replied = df[df['Actual EPC reply Date'] <= date]['Weight'].sum()
-        if 'Final Issuance' in df.columns:
-            finalized = df[df['Final Issuance'] <= date]['Weight'].sum()
-        
-        # Each step is worth 1/4 of the document's weight
+        uploaded = df[df['Date Data Upload by EPC'] <= date]['Weight'].sum() if 'Date Data Upload by EPC' in df.columns and df['Date Data Upload by EPC'].notna().any() else 0
+        reviewed = df[df['Actual Fichtner Review'] <= date]['Weight'].sum() if 'Actual Fichtner Review' in df.columns and df['Actual Fichtner Review'].notna().any() else 0
+        replied = df[df['Actual EPC reply Date'] <= date]['Weight'].sum() if 'Actual EPC reply Date' in df.columns and df['Actual EPC reply Date'].notna().any() else 0
+        finalized = df[df['Final Issuance'] <= date]['Weight'].sum() if 'Final Issuance' in df.columns and df['Final Issuance'].notna().any() else 0
         progress = (uploaded * 0.25 + reviewed * 0.25 + replied * 0.25 + finalized * 0.25) / total_weight * 100
         actual_progress.append(progress)
     

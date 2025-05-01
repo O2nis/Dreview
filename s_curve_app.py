@@ -30,7 +30,7 @@ def main():
 1,Area1,Piping,Proj1,Origin1,AAA,Type1,1,Doc00001,Rev0,AC1,D1,Cat1,TC1,CSOE1,CSEPC1,45,8-Oct-24,,8-Dec-24, , , ,80,APP,1,1
 2,Area2,Electrical,Proj2,Origin2,BBB,Type2,2,Doc00002,Rev1,AC2,D2,Cat2,TC2,CSOE2,CSEPC2,30,8-Mar-25,, , , , ,100,REJ,2,0
 3,Area3,Instrument,Proj3,Origin3,CCC,Type3,3,Doc00003,Rev2,AC3,D3,Cat3,TC3,CSOE3,CSEPC3,60,8-Mar-25,, , , , ,120,Closed,3,1
-4,Area4,Economic,Proj4,Origin4,DDD,Type4,4,Doc00004,Rev3,AC4,D4,Cat4,TC4,CSOE4,CSE şimd4,360,,, , , , ,220,,4,0
+4,Area4,Economic,Proj4,Origin4,DDD,Type4,4,Doc00004,Rev3,AC4,D4,Cat4,TC4,CSOE4,CSEPC4,360,,, , , , ,220,,4,0
 """
 
     st.subheader("Download CSV Template")
@@ -123,8 +123,8 @@ def main():
     df["Reply By EPC"] = df["Reply By EPC"].apply(parse_date)
 
     df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
-    df["Man Hours"] = pd.to_numeric(df["Man Hours]"], errors="coerce").fillna(0)
-    df["Flag"] = pd.to_numeric(df["Flag]"], errors="coerce").fillna(0)
+    df["Man Hours"] = pd.to_numeric(df["Man Hours"], errors="coerce").fillna(0)
+    df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
 
     df["Issuance Expected"] = pd.Timestamp(INITIAL_DATE) + pd.to_timedelta(df["Schedule [Days]"], unit="D")
     df["Expected Review"] = df["Issuance Expected"] + dt.timedelta(days=IFA_DELTA_DAYS)
@@ -466,7 +466,47 @@ def main():
     st.pyplot(fig2)
 
     # --------------------------
-    # 9) TWO DONUT CHARTS SIDE BY SIDE
+    # 8b) ACTUAL vs EXPECTED HOURS BY AREA
+    # --------------------------
+    by_area = df.groupby("Area")[["Actual_Progress_At_Final","Expected_Progress_At_Final"]].sum()
+    
+    # Convert to percentage if selected
+    if PERCENTAGE_VIEW:
+        by_area["Actual_Progress_At_Final"] = by_area["Actual_Progress_At_Final"] / total_mh * 100
+        by_area["Expected_Progress_At_Final"] = by_area["Expected_Progress_At_Final"] / total_mh * 100
+        y_label = "Percentage of Total Man-Hours"
+    else:
+        y_label = "Cumulative Hours"
+
+    st.subheader("Actual vs. Expected Hours by Area")
+    fig_area, ax_area = plt.subplots(figsize=(8,5))
+    x = range(len(by_area.index))
+    width = 0.35
+
+    ax_area.bar(
+        [i - width/2 for i in x],
+        by_area["Actual_Progress_At_Final"],
+        width=width,
+        label='Actual Hours'
+    )
+    ax_area.bar(
+        [i + width/2 for i in x],
+        by_area["Expected_Progress_At_Final"],
+        width=width,
+        label='Expected Hours'
+    )
+
+    ax_area.set_title("Actual vs. Expected Hours by Area", fontsize=10)
+    ax_area.set_xlabel("Area", fontsize=9)
+    ax_area.set_ylabel(y_label, fontsize=9)
+    ax_area.set_xticks(ticks=x)
+    ax_area.set_xticklabels(by_area.index, rotation=45, ha='right', fontsize=8)
+    ax_area.legend(fontsize=8)
+    plt.tight_layout()
+    st.pyplot(fig_area)
+
+    # --------------------------
+    # 9) THREE DONUT CHARTS SIDE BY SIDE
     # --------------------------
     total_actual = df["Actual_Progress_At_Final"].sum()
     overall_pct = total_actual / total_mh if total_mh > 0 else 0
@@ -475,8 +515,11 @@ def main():
     total_docs = len(df)
     ifr_values = [ifr_delivered, total_docs - ifr_delivered]
 
+    flag_docs = df[df["Flag"] == 1].shape[0]
+    flag_values = [flag_docs, total_docs - flag_docs]
+
     st.subheader("Donut Charts")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         st.write("**Total Project Completion**")
@@ -508,6 +551,24 @@ def main():
         )
         ax_ifr.set_title("Issued By EPC Status", fontsize=9)
         st.pyplot(fig_ifr)
+
+    with col3:
+        st.write("**Documents with Final Flag**")
+        def flag_autopct(pct):
+            total_count = sum(flag_values)
+            docs = int(round(pct * total_count / 100.0))
+            return f"{docs} docs" if docs > 0 else ""
+
+        fig_flag, ax_flag = plt.subplots(figsize=(4,4))
+        ax_flag.pie(
+            flag_values,
+            labels=["Final (Flag=1)", "Not Final"],
+            autopct=flag_autopct,
+            startangle=140,
+            wedgeprops={"width":0.4}
+        )
+        ax_flag.set_title("Documents with Final Flag", fontsize=9)
+        st.pyplot(fig_flag)
 
     # --------------------------
     # 10) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
@@ -584,7 +645,7 @@ def main():
     st.dataframe(disc_delay)
 
     # --------------------------
-    # 12) FINAL MILESTONE + STATUS STACKED BAR
+    # 12) FINAL MILESTONE + STATUS STACKED BAR (IGNORING FLAG)
     # --------------------------
     def get_final_milestone(row):
         if pd.notna(row["Reply By EPC"]):
@@ -605,9 +666,7 @@ def main():
           .reset_index(name="Count")
     )
     pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
-    # Ensure all milestones are included, even if they have zero counts
-    all_milestones = ["NO ISSUANCE", "Issued By EPC", "Review By OE", "Reply By EPC"]
-    pivoted = pivoted.reindex(all_milestones).fillna(0)
+    pivoted = pivoted.reindex(["Issued By EPC","Review By OE","Reply By EPC"]).dropna(how="all")
 
     fig_status, ax_status = plt.subplots(figsize=(7,5))
     pivoted.plot(kind="bar", stacked=True, ax=ax_status)

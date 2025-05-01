@@ -30,7 +30,7 @@ def main():
 1,Area1,Piping,Proj1,Origin1,AAA,Type1,1,Doc00001,Rev0,AC1,D1,Cat1,TC1,CSOE1,CSEPC1,45,8-Oct-24,,8-Dec-24, , , ,80,APP,1,1
 2,Area2,Electrical,Proj2,Origin2,BBB,Type2,2,Doc00002,Rev1,AC2,D2,Cat2,TC2,CSOE2,CSEPC2,30,8-Mar-25,, , , , ,100,REJ,2,0
 3,Area3,Instrument,Proj3,Origin3,CCC,Type3,3,Doc00003,Rev2,AC3,D3,Cat3,TC3,CSOE3,CSEPC3,60,8-Mar-25,, , , , ,120,Closed,3,1
-4,Area4,Economic,Proj4,Origin4,DDD,Type4,4,Doc00004,Rev3,AC4,D4,Cat4,TC4,CSOE4,CSEPC4,360,,, , , , ,220,,4,0
+4,Area4,Economic,Proj4,Origin4,DDD,Type4,4,Doc00004,Rev3,AC4,D4,Cat4,TC4,CSOE4,CSE şimd4,360,,, , , , ,220,,4,0
 """
 
     st.subheader("Download CSV Template")
@@ -124,7 +124,7 @@ def main():
 
     df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
     df["Man Hours"] = pd.to_numeric(df["Man Hours]"], errors="coerce").fillna(0)
-    df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
+    df["Flag"] = pd.to_numeric(df["Flag]"], errors="coerce").fillna(0)
 
     df["Issuance Expected"] = pd.Timestamp(INITIAL_DATE) + pd.to_timedelta(df["Schedule [Days]"], unit="D")
     df["Expected Review"] = df["Issuance Expected"] + dt.timedelta(days=IFA_DELTA_DAYS)
@@ -551,7 +551,6 @@ def main():
         e_val = 0.0
         if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= today_date:
             e_val += IFR_WEIGHT
-        Os.makedirs("examples")
         if pd.notna(row["Expected Review"]) and row["Expected Review"] <= today_date:
             e_val += IFA_WEIGHT
         if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= today_date:
@@ -606,7 +605,9 @@ def main():
           .reset_index(name="Count")
     )
     pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
-    pivoted = pivoted.reindex(["Issued By EPC","Review By OE","Reply By EPC"]).dropna(how="all")
+    # Ensure all milestones are included, even if they have zero counts
+    all_milestones = ["NO ISSUANCE", "Issued By EPC", "Review By OE", "Reply By EPC"]
+    pivoted = pivoted.reindex(all_milestones).fillna(0)
 
     fig_status, ax_status = plt.subplots(figsize=(7,5))
     pivoted.plot(kind="bar", stacked=True, ax=ax_status)

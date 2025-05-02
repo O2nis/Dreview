@@ -527,11 +527,6 @@ def main():
     if disc_counts.empty:
         st.warning("No Discipline data available for pie chart.")
     else:
-        # Debug output
-        st.write("**Debug Info (Discipline):**")
-        st.write("Discipline Counts:", disc_counts.to_dict())
-        st.write("Document Status Counts:", df.groupby(["Discipline", "Doc_Status"]).size().to_dict())
-
         # Create figure
         fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(8, 8))
 
@@ -553,8 +548,6 @@ def main():
                 inner_colors.append(status_colors[row["Doc_Status"]])
 
         # Validate inner_sizes
-        st.write("Inner Sizes (Discipline):", inner_sizes)
-        st.write("Inner Colors (Dis cliché):", inner_colors)
         if not inner_sizes or sum(inner_sizes) == 0:
             st.warning("No valid data for inner pie chart (Discipline). All counts are zero or empty.")
         else:

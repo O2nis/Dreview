@@ -527,18 +527,18 @@ def main():
     if disc_counts.empty:
         st.warning("No Discipline data available for pie chart.")
     else:
-        # Create figure
-        fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(8, 8))
+        # Create figure with adjusted size
+        fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(10, 10))
 
         # Outer pie (Discipline)
         outer_labels = disc_counts.index
         outer_sizes = disc_counts.values
-        outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff", "#0059b3"]  # Shades of blue
+        outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff", "#0059b3"]  # Your original blue shades
 
         # Inner pie (One wedge per document)
         inner_sizes = []
         inner_colors = []
-        status_colors = {"Completed": "#808080", "Incomplete": "#FFFFFF"}  # Gray for Completed, White for Incomplete
+        status_colors = {"Completed": "#808080", "Incomplete": "#F0F0F0"}  # Gray for Completed, Light gray for Incomplete
 
         # Collect inner sizes (1 per document) and colors
         for disc in disc_counts.index:
@@ -551,58 +551,57 @@ def main():
         if not inner_sizes or sum(inner_sizes) == 0:
             st.warning("No valid data for inner pie chart (Discipline). All counts are zero or empty.")
         else:
-            # Custom autopct for outer pie (Discipline name + count)
-            def outer_autopct(pct, allvals, labels):
-                absolute = int(round(pct * sum(allvals) / 100.0))
-                return f"{labels[outer_sizes.tolist().index(absolute)]}\n{absolute}"
-
-            # Plot outer pie with names and counts
-            outer_result = ax_nested_disc.pie(
+            # Plot outer pie (Discipline)
+            outer_wedges, outer_texts = ax_nested_disc.pie(
                 outer_sizes,
-                autopct=lambda pct: outer_autopct(pct, outer_sizes, outer_labels),
-                startangle=90,
                 radius=1.0,
+                labels=None,
+                startangle=90,
                 wedgeprops=dict(width=0.3, edgecolor='w'),
-                colors=outer_colors,
-                textprops={'fontsize': 8, 'ha': 'center', 'va': 'center'}
+                colors=outer_colors
             )
-            wedges_outer, texts_outer, autotexts_outer = outer_result
-            for autotext in autotexts_outer:
-                text = autotext.get_text()
-                name, number = text.split('\n')
-                # Set Discipline name (regular, smaller font)
-                autotext.set_text(name)
-                autotext.set_fontsize(8)
-                autotext.set_fontweight('normal')
-                # Add count below (bold, larger font)
-                wedge_center = autotext.get_position()
+
+            # Add discipline names and counts as annotations
+            for i, (wedge, label, count) in enumerate(zip(outer_wedges, outer_labels, outer_sizes)):
+                angle = (wedge.theta2 - wedge.theta1)/2. + wedge.theta1
+                x = 1.1 * np.cos(np.deg2rad(angle))
+                y = 1.1 * np.sin(np.deg2rad(angle))
+                horizontalalignment = {-1: "right", 1: "left"}.get(np.sign(x), "center")
+
+                # Add discipline name (regular font)
                 ax_nested_disc.annotate(
-                    number,
-                    xy=wedge_center,
-                    xytext=(0, -10),
-                    textcoords="offset points",
+                    label,
+                    xy=(x, y),
+                    xytext=(1.5*np.sign(x), 0),
+                    textcoords='offset points',
+                    ha=horizontalalignment,
+                    va='center',
+                    fontsize=8,
+                    fontweight='normal'
+                )
+
+                # Add count below (bold, in a box)
+                ax_nested_disc.annotate(
+                    f"({count})",
+                    xy=(x, y),
+                    xytext=(1.5*np.sign(x), -15),
+                    textcoords='offset points',
+                    ha=horizontalalignment,
+                    va='center',
                     fontsize=10,
                     fontweight='bold',
-                    ha='center',
-                    va='center'
+                    bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.7)
                 )
 
             # Plot inner pie (one wedge per document, no text)
             try:
-                inner_result = ax_nested_disc.pie(
+                inner_wedges = ax_nested_disc.pie(
                     inner_sizes,
-                    startangle=90,
                     radius=0.7,
+                    startangle=90,
                     wedgeprops=dict(width=0.3, edgecolor='w'),
-                    colors=inner_colors,
-                    autopct=None,
-                    labels=None
-                )
-                wedges_inner = inner_result[0]
-                texts_inner = inner_result[1]
-                autotexts_inner = inner_result[2] if len(inner_result) > 2 else []
-                for autotext in autotexts_inner:
-                    autotext.set_visible(False)
+                    colors=inner_colors
+                )[0]
             except ValueError as e:
                 st.error(f"Error plotting inner pie chart (Discipline): {str(e)}")
                 plt.close(fig_nested_disc)

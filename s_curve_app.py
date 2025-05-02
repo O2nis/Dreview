@@ -26,11 +26,10 @@ def main():
     # ----------------------------------------------------------------
     # A) TEMPLATE CSV DOWNLOAD (with first 3 rows + headers)
     # ----------------------------------------------------------------
-    TEMPLATE_CONTENT = """ID,Area,Discipline,Project Identifier,Originator,Document Title,Document Type,Counter,Document Number,Revision,Area code,Disc,Category,Transmittal Code,Comment Sheet OE,Comment Sheet EPC,Schedule [Days],Issued By EPC,Issuance Expected,Review By OE,Expected Review,Reply By EPC,Final Issuance Expected,Man Hours,Status,CS rev,Flag
-1,Area1,Piping,Proj1,Origin1,AAA,Type1,1,Doc00001,Rev0,AC1,D1,Cat1,TC1,CSOE1,CSEPC1,45,8-Oct-24,,8-Dec-24, , , ,80,APP,1,1
-2,Area2,Electrical,Proj2,Origin2,BBB,Type2,2,Doc00002,Rev1,AC2,D2,Cat2,TC2,CSOE2,CSEPC2,30,8-Mar-25,, , , , ,100,REJ,2,0
-3,Area3,Instrument,Proj3,Origin3,CCC,Type3,3,Doc00003,Rev2,AC3,D3,Cat3,TC3,CSOE3,CSEPC3,60,8-Mar-25,, , , , ,120,Closed,3,1
-4,Area4,Economic,Proj4,Origin4,DDD,Type4,4,Doc00004,Rev3,AC4,D4,Cat4,TC4,CSOE4,CSEPC4,360,,, , , , ,220,,4,0
+    TEMPLATE_CONTENT = """ID,Discipline,Area,Document Title,Project Indentifer,Originator,Document Number,Document Type ,Counter ,Revision,Area code,Disc,Category,Transmittal Code,Comment Sheet OE,Comment Sheet EPC,Schedule [Days],Issued by EPC,Issuance Expected,Review By OE,Expected review,Reply By EPC,Final Issuance Expected,Man Hours ,Status,CS rev,Flag
+1,General,General,Overall site layout,KFE,SC,0001,MA,00,A,GEN,GN,DRG,"KFE-SC-MOEM-T-0052-AO-PV System Analysis Report, Project Quality Management Plan and TCO.",MOEM-TCO-CI-0017-Rev_00_FI,MOEM-TCO-CI-0017-Rev_00_CE,10,4-Apr-25,,4-Apr-25, , , ,10,CO,1,0
+2,General,General,Overall Single Line Diagram (PV plant + interconnection facilities),KFE,SC,0002,MA,00,A,GEN,GN,DRG,,,,10,18-Mar-25,,18-Mar-25, , , ,10,CO,1,0
+3,PV,General,PVsyst yield estimates,KFE,SC,0003,MA,00,A,GEN,PV,DRG,,,,10,,,, , , ,10,FN,0,0
 """
 
     st.subheader("Download CSV Template")
@@ -90,14 +89,14 @@ def main():
     df = pd.read_csv(CSV_INPUT_PATH)
     df.columns = [
         "ID",
-        "Area",
         "Discipline",
-        "Project Identifier",
-        "Originator",
+        "Area",
         "Document Title",
-        "Document Type",
-        "Counter",
+        "Project Indentifer",
+        "Originator",
         "Document Number",
+        "Document Type ",
+        "Counter ",
         "Revision",
         "Area code",
         "Disc",
@@ -106,41 +105,41 @@ def main():
         "Comment Sheet OE",
         "Comment Sheet EPC",
         "Schedule [Days]",
-        "Issued By EPC",
+        "Issued by EPC",
         "Issuance Expected",
         "Review By OE",
-        "Expected Review",
+        "Expected review",
         "Reply By EPC",
         "Final Issuance Expected",
-        "Man Hours",
+        "Man Hours ",
         "Status",
         "CS rev",
         "Flag"
     ]
 
-    df["Issued By EPC"] = df["Issued By EPC"].apply(parse_date)
+    df["Issued by EPC"] = df["Issued by EPC"].apply(parse_date)
     df["Review By OE"] = df["Review By OE"].apply(parse_date)
     df["Reply By EPC"] = df["Reply By EPC"].apply(parse_date)
 
     df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
-    df["Man Hours"] = pd.to_numeric(df["Man Hours]"], errors="coerce").fillna(0)
+    df["Man Hours "] = pd.to_numeric(df["Man Hours "], errors="coerce").fillna(0)
     df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
 
     df["Issuance Expected"] = pd.Timestamp(INITIAL_DATE) + pd.to_timedelta(df["Schedule [Days]"], unit="D")
-    df["Expected Review"] = df["Issuance Expected"] + dt.timedelta(days=IFA_DELTA_DAYS)
-    df["Final Issuance Expected"] = df["Expected Review"] + dt.timedelta(days=IFT_DELTA_DAYS)
+    df["Expected review"] = df["Issuance Expected"] + dt.timedelta(days=IFA_DELTA_DAYS)
+    df["Final Issuance Expected"] = df["Expected review"] + dt.timedelta(days=IFT_DELTA_DAYS)
     df["Final Issuance Expected"] = pd.to_datetime(df["Final Issuance Expected"], errors='coerce')
 
     ift_expected_max = df["Final Issuance Expected"].dropna().max()
     if pd.isna(ift_expected_max):
         st.warning("No valid Final Issuance Expected in data. Falling back to overall max date.")
         ift_expected_max = (
-            pd.Series(df[["Issuance Expected","Expected Review","Final Issuance Expected"]].values.ravel())
+            pd.Series(df[["Issuance Expected","Expected review","Final Issuance Expected"]].values.ravel())
             .dropna()
             .max()
         )
 
-    date_cols = ["Issued By EPC","Review By OE","Reply By EPC","Issuance Expected","Expected Review","Final Issuance Expected"]
+    date_cols = ["Issued by EPC","Review By OE","Reply By EPC","Issuance Expected","Expected review","Final Issuance Expected"]
     all_dates = df[date_cols].values.ravel()
     valid_dates = pd.Series(all_dates).dropna()
     if valid_dates.empty:
@@ -149,7 +148,7 @@ def main():
 
     start_date = valid_dates.min()
     today_date = pd.to_datetime("today").normalize()
-    total_mh = df["Man Hours"].sum()
+    total_mh = df["Man Hours "].sum()
 
     # --------------------------
     # 3) BUILD TIMELINES
@@ -172,9 +171,9 @@ def main():
         a_sum = 0.0
         has_progress = False
         for _, row in df.iterrows():
-            mh = row["Man Hours"]
+            mh = row["Man Hours "]
             a_val = 0.0
-            if pd.notna(row["Issued By EPC"]) and row["Issued By EPC"] <= current_date:
+            if pd.notna(row["Issued by EPC"]) and row["Issued by EPC"] <= current_date:
                 a_val += IFR_WEIGHT
             if pd.notna(row["Review By OE"]) and row["Review By OE"] <= current_date:
                 a_val += IFA_WEIGHT
@@ -205,11 +204,11 @@ def main():
         e_sum = 0.0
         has_progress = False
         for _, row in df.iterrows():
-            mh = row["Man Hours"]
+            mh = row["Man Hours "]
             e_val = 0.0
             if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= current_date:
                 e_val += IFR_WEIGHT
-            if pd.notna(row["Expected Review"]) and row["Expected Review"] <= current_date:
+            if pd.notna(row["Expected review"]) and row["Expected review"] <= current_date:
                 e_val += IFA_WEIGHT
             if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= current_date:
                 e_val += IFT_WEIGHT
@@ -400,14 +399,14 @@ def main():
         plt.rc("axes", prop_cycle=standard_cycler)
 
     # --------------------------
-    # 8) ACTUAL vs EXPECTED HOURS BY DISCIPLINE
+    # 8) ACTUAL vs EXPECTED HOURS BY DISCIPLINE débats
     # --------------------------
     end_date = max(today_date, ift_expected_max)
     final_actual_progress = []
     final_expected_progress = []
     for _, row in df.iterrows():
         a_prog = 0.0
-        if pd.notna(row["Issued By EPC"]) and row["Issued By EPC"] <= end_date:
+        if pd.notna(row["Issued by EPC"]) and row["Issued by EPC"] <= end_date:
             a_prog += IFR_WEIGHT
         if pd.notna(row["Review By OE"]) and row["Review By OE"] <= end_date:
             a_prog += IFA_WEIGHT
@@ -417,13 +416,13 @@ def main():
         e_prog = 0.0
         if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= end_date:
             e_prog += IFR_WEIGHT
-        if pd.notna(row["Expected Review"]) and row["Expected Review"] <= end_date:
+        if pd.notna(row["Expected review"]) and row["Expected review"] <= end_date:
             e_prog += IFA_WEIGHT
         if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= end_date:
             e_prog += IFT_WEIGHT
 
-        final_actual_progress.append(row["Man Hours"] * a_prog)
-        final_expected_progress.append(row["Man Hours"] * e_prog)
+        final_actual_progress.append(row["Man Hours "] * a_prog)
+        final_expected_progress.append(row["Man Hours "] * e_prog)
 
     df["Actual_Progress_At_Final"] = final_actual_progress
     df["Expected_Progress_At_Final"] = final_expected_progress
@@ -471,7 +470,7 @@ def main():
     total_actual = df["Actual_Progress_At_Final"].sum()
     overall_pct = total_actual / total_mh if total_mh > 0 else 0
 
-    ifr_delivered = df["Issued By EPC"].notna().sum()
+    ifr_delivered = df["Issued by EPC"].notna().sum()
     total_docs = len(df)
     ifr_values = [ifr_delivered, total_docs - ifr_delivered]
 
@@ -520,7 +519,7 @@ def main():
             return "Completed"
         elif pd.notna(row["Review By OE"]):
             return "Review by OE"
-        elif pd.notna(row["Issued By EPC"]):
+        elif pd.notna(row["Issued by EPC"]):
             return "Issued by EPC"
         else:
             return "Not Yet Issued"
@@ -653,7 +652,7 @@ def main():
     # --------------------------
     # 11) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
     # --------------------------
-    df["Issued_bool"] = df["Issued By EPC"].notna().astype(int)
+    df["Issued_bool"] = df["Issued by EPC"].notna().astype(int)
     df["Review_bool"] = df["Review By OE"].notna().astype(int)
     df["Reply_bool"] = df["Reply By EPC"].notna().astype(int)
 
@@ -682,7 +681,7 @@ def main():
 
     for _, row in df.iterrows():
         a_val = 0.0
-        if pd.notna(row["Issued By EPC"]) and row["Issued By EPC"] <= today_date:
+        if pd.notna(row["Issued by EPC"]) and row["Issued by EPC"] <= today_date:
             a_val += IFR_WEIGHT
         if pd.notna(row["Review By OE"]) and row["Review By OE"] <= today_date:
             a_val += IFA_WEIGHT
@@ -692,13 +691,13 @@ def main():
         e_val = 0.0
         if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= today_date:
             e_val += IFR_WEIGHT
-        if pd.notna(row["Expected Review"]) and row["Expected Review"] <= today_date:
+        if pd.notna(row["Expected review"]) and row["Expected review"] <= today_date:
             e_val += IFA_WEIGHT
         if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= today_date:
             e_val += IFT_WEIGHT
 
-        actual_prog_today.append(row["Man Hours"] * a_val)
-        expected_prog_today.append(row["Man Hours"] * e_val)
+        actual_prog_today.append(row["Man Hours "] * a_val)
+        expected_prog_today.append(row["Man Hours "] * e_val)
 
     df["Actual_Progress_Today"] = actual_prog_today
     df["Expected_Progress_Today"] = expected_prog_today
@@ -732,8 +731,8 @@ def main():
             return "Reply By EPC"
         elif pd.notna(row["Review By OE"]):
             return "Review By OE"
-        elif pd.notna(row["Issued By EPC"]):
-            return "Issued By EPC"
+        elif pd.notna(row["Issued by EPC"]):
+            return "Issued by EPC"
         else:
             return "NO ISSUANCE"
 
@@ -746,7 +745,7 @@ def main():
           .reset_index(name="Count")
     )
     pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
-    pivoted = pivoted.reindex(["Issued By EPC","Review By OE","Reply By EPC"]).dropna(how="all")
+    pivoted = pivoted.reindex(["Issued by EPC","Review By OE","Reply By EPC"]).dropna(how="all")
 
     fig_status, ax_status = plt.subplots(figsize=(7,5))
     pivoted.plot(kind="bar", stacked=True, ax=ax_status)
@@ -773,7 +772,7 @@ def main():
     # 14) SAVE UPDATED CSV
     # --------------------------
     df["Issuance Expected"] = pd.to_datetime(df["Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
-    df["Expected Review"] = pd.to_datetime(df["Expected Review"], errors="coerce").dt.strftime("%d-%b-%y")
+    df["Expected review"] = pd.to_datetime(df["Expected review"], errors="coerce").dt.strftime("%d-%b-%y")
     df["Final Issuance Expected"] = pd.to_datetime(df["Final Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
 
     st.subheader("Download Updated CSV")

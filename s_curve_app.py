@@ -53,9 +53,9 @@ def main():
 
     IFA_DELTA_DAYS = st.sidebar.number_input("Days to add for Expected Review", value=10, step=1)
     IFT_DELTA_DAYS = st.sidebar.number_input("Days to add for Final Issuance Expected", value=5, step=1)
-    
+
     # Add toggle for percentage view
-   -MAIN_PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
+    PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Visualization Settings")
@@ -554,7 +554,7 @@ def main():
 
         # Validate inner_sizes
         st.write("Inner Sizes (Discipline):", inner_sizes)
-        st.write("Inner Colors (Discipline):", inner_colors)
+        st.write("Inner Colors (Dis cliché):", inner_colors)
         if not inner_sizes or sum(inner_sizes) == 0:
             st.warning("No valid data for inner pie chart (Discipline). All counts are zero or empty.")
         else:

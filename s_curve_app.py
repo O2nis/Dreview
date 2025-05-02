@@ -247,7 +247,7 @@ def main():
     elif today_date >= expected_timeline[-1]:
         expected_today_idx = len(expected_timeline) - 1
     else:
-        expected_today_idx = np.searchsorted(expected_timeline, today_date, side="right") - 1
+        expected_today_idx = np.searchsorted(expected_timeline, today_date, sizeof="right") - 1
     expected_today = expected_cum[expected_today_idx]
 
     gap_hrs = final_expected - actual_today
@@ -526,6 +526,11 @@ def main():
 
     df["Doc_Status"] = df.apply(get_doc_status, axis=1)
 
+    # Custom autopct function to show document counts
+    def doc_count_autopct(pct, allvals):
+        absolute = int(round(pct * sum(allvals) / 100.0))
+        return f"{absolute}" if absolute > 0 else ""
+
     # Prepare data for Discipline nested pie chart
     disc_counts = df.groupby("Discipline").size()
     if disc_counts.empty:
@@ -546,14 +551,14 @@ def main():
             # Outer pie (Discipline)
             outer_labels = disc_counts.index
             outer_sizes = disc_counts.values
-            outer_colors = plt.cm.tab20(np.linspace(0, 1, len(outer_labels)))
+            outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff", "#0059b3"]  # Shades of blue
 
             # Inner pie (Status within each Discipline)
             inner_sizes = []
             inner_colors = []
-            status_colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99']  # Colors for statuses
+            status_colors = ["#d9d9d9", "#b3b3b3", "#808080", "#4d4d4d"]  # Shades of gray
 
-            # Collect inner sizes and colors first
+            # Collect inner sizes and colors
             for disc in disc_counts.index:
                 for status in status_order:
                     count = disc_status_counts.loc[disc, status]
@@ -561,34 +566,49 @@ def main():
                         inner_sizes.append(count)
                         inner_colors.append(status_colors[status_order.index(status)])
 
-            # Assign labels after collecting sizes
+            # Assign inner labels (for legend only)
             inner_labels = []
-            max_size = max(inner_sizes) if inner_sizes else 1  # Avoid division by zero
             for i, count in enumerate(inner_sizes):
                 status = status_order[inner_colors[i] == status_colors][0]
-                inner_labels.append(status if count > max_size * 0.05 else "")
+                inner_labels.append(status)
 
             # Plot outer pie
-            wedges, texts, autotexts = ax_nested_disc.pie(
+            wedges_outer, texts_outer, autotexts_outer = ax_nested_disc.pie(
                 outer_sizes,
-                labels=outer_labels,
-                autopct="%1.1f%%",
+                autopct=lambda pct: doc_count_autopct(pct, outer_sizes),
                 startangle=90,
                 radius=1.0,
                 wedgeprops=dict(width=0.3, edgecolor='w'),
-                colors=outer_colors
+                colors=outer_colors,
+                textprops={'fontsize': 6}
             )
 
             # Plot inner pie
             wedges_inner, texts_inner, autotexts_inner = ax_nested_disc.pie(
                 inner_sizes,
-                labels=inner_labels,
-                autopct="%1.1f%%",
+                autopct=lambda pct: doc_count_autopct(pct, inner_sizes),
                 startangle=90,
                 radius=0.7,
                 wedgeprops=dict(width=0.3, edgecolor='w'),
                 colors=inner_colors,
-                labeldistance=0.7
+                textprops={'fontsize': 6}
+            )
+
+            # Create legends
+            outer_legend = ax_nested_disc.legend(
+                wedges_outer, outer_labels,
+                title="Disciplines",
+                loc="center left",
+                bbox_to_anchor=(1, 0.5),
+                fontsize=8
+            )
+            ax_nested_disc.add_artist(outer_legend)
+            ax_nested_disc.legend(
+                wedges_inner[:len(status_order)], status_order,
+                title="Status",
+                loc="center left",
+                bbox_to_anchor=(1, 0.2),
+                fontsize=8
             )
 
             ax_nested_disc.set_title("Documents by Discipline and Status", fontsize=10)
@@ -610,14 +630,14 @@ def main():
             # Outer pie (Area)
             outer_labels = area_counts.index
             outer_sizes = area_counts.values
-            outer_colors = plt.cm.tab20(np.linspace(0, 1, len(outer_labels)))
+            outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff", "#0059b3"]  # Shades of blue
 
             # Inner pie (Status within each Area)
             inner_sizes = []
             inner_colors = []
-            status_colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99']  # Colors for statuses
+            status_colors = ["#d9d9d9", "#b3b3b3", "#808080", "#4d4d4d"]  # Shades of gray
 
-            # Collect inner sizes and colors first
+            # Collect inner sizes and colors
             for area in area_counts.index:
                 for status in status_order:
                     count = area_status_counts.loc[area, status]
@@ -625,34 +645,49 @@ def main():
                         inner_sizes.append(count)
                         inner_colors.append(status_colors[status_order.index(status)])
 
-            # Assign labels after collecting sizes
+            # Assign inner labels (for legend only)
             inner_labels = []
-            max_size = max(inner_sizes) if inner_sizes else 1  # Avoid division by zero
             for i, count in enumerate(inner_sizes):
                 status = status_order[inner_colors[i] == status_colors][0]
-                inner_labels.append(status if count > max_size * 0.05 else "")
+                inner_labels.append(status)
 
             # Plot outer pie
-            wedges, texts, autotexts = ax_nested_area.pie(
+            wedges_outer, texts_outer, autotexts_outer = ax_nested_area.pie(
                 outer_sizes,
-                labels=outer_labels,
-                autopct="%1.1f%%",
+                autopct=lambda pct: doc_count_autopct(pct, outer_sizes),
                 startangle=90,
                 radius=1.0,
                 wedgeprops=dict(width=0.3, edgecolor='w'),
-                colors=outer_colors
+                colors=outer_colors,
+                textprops={'fontsize': 6}
             )
 
             # Plot inner pie
             wedges_inner, texts_inner, autotexts_inner = ax_nested_area.pie(
                 inner_sizes,
-                labels=inner_labels,
-                autopct="%1.1f%%",
+                autopct=lambda pct: doc_count_autopct(pct, inner_sizes),
                 startangle=90,
                 radius=0.7,
                 wedgeprops=dict(width=0.3, edgecolor='w'),
                 colors=inner_colors,
-                labeldistance=0.7
+                textprops={'fontsize': 6}
+            )
+
+            # Create legends
+            outer_legend = ax_nested_area.legend(
+                wedges_outer, outer_labels,
+                title="Areas",
+                loc="center left",
+                bbox_to_anchor=(1, 0.5),
+                fontsize=8
+            )
+            ax_nested_area.add_artist(outer_legend)
+            ax_nested_area.legend(
+                wedges_inner[:len(status_order)], status_order,
+                title="Status",
+                loc="center left",
+                bbox_to_anchor=(1, 0.2),
+                fontsize=8
             )
 
             ax_nested_area.set_title("Documents by Area and Status", fontsize=10)

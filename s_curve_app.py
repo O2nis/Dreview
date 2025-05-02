@@ -588,19 +588,22 @@ def main():
                     va='center'
                 )
 
-            # Plot inner pie (one wedge per document)
+            # Plot inner pie (one wedge per document, no text)
             try:
                 inner_result = ax_nested_disc.pie(
                     inner_sizes,
                     startangle=90,
                     radius=0.7,
                     wedgeprops=dict(width=0.3, edgecolor='w'),
-                    colors=inner_colors
+                    colors=inner_colors,
+                    autopct=None,
+                    labels=None
                 )
-                # Handle variable return values
                 wedges_inner = inner_result[0]
                 texts_inner = inner_result[1]
                 autotexts_inner = inner_result[2] if len(inner_result) > 2 else []
+                for autotext in autotexts_inner:
+                    autotext.set_visible(False)
             except ValueError as e:
                 st.error(f"Error plotting inner pie chart (Discipline): {str(e)}")
                 plt.close(fig_nested_disc)

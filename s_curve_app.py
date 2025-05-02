@@ -399,7 +399,7 @@ def main():
         plt.rc("axes", prop_cycle=standard_cycler)
 
     # --------------------------
-    # 8) ACTUAL vs EXPECTED HOURS BY DISCIPLINE débats
+    # 8) ACTUAL vs EXPECTED HOURS BY DISCIPLINE
     # --------------------------
     end_date = max(today_date, ift_expected_max)
     final_actual_progress = []
@@ -500,7 +500,7 @@ def main():
         fig_ifr, ax_ifr = plt.subplots(figsize=(4,4))
         ax_ifr.pie(
             ifr_values,
-            labels=["Issued By EPC", "Not Yet Issued"],
+            labels=["Issued by EPC", "Not Yet Issued"],
             autopct=ifr_autopct,
             startangle=140,
             wedgeprops={"width":0.4}
@@ -528,126 +528,136 @@ def main():
 
     # Prepare data for Discipline nested pie chart
     disc_counts = df.groupby("Discipline").size()
-    disc_status_counts = df.groupby(["Discipline", "Doc_Status"]).size().unstack(fill_value=0)
-    # Ensure all status categories are present
-    status_order = ["Not Yet Issued", "Issued by EPC", "Review by OE", "Completed"]
-    disc_status_counts = disc_status_counts.reindex(columns=status_order, fill_value=0)
+    if disc_counts.empty:
+        st.warning("No Discipline data available for pie chart.")
+    else:
+        disc_status_counts = df.groupby(["Discipline", "Doc_Status"]).size().unstack(fill_value=0)
+        # Ensure all status categories are present
+        status_order = ["Not Yet Issued", "Issued by EPC", "Review by OE", "Completed"]
+        disc_status_counts = disc_status_counts.reindex(columns=status_order, fill_value=0)
+
+        # Create two columns for side-by-side nested pie charts
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.write("**Document Status by Discipline**")
+            fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(6, 6))
+
+            # Outer pie (Discipline)
+            outer_labels = disc_counts.index
+            outer_sizes = disc_counts.values
+            outer_colors = plt.cm.tab20(np.linspace(0, 1, len(outer_labels)))
+
+            # Inner pie (Status within each Discipline)
+            inner_sizes = []
+            inner_colors = []
+            status_colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99']  # Colors for statuses
+
+            # Collect inner sizes and colors first
+            for disc in disc_counts.index:
+                for status in status_order:
+                    count = disc_status_counts.loc[disc, status]
+                    if count > 0:
+                        inner_sizes.append(count)
+                        inner_colors.append(status_colors[status_order.index(status)])
+
+            # Assign labels after collecting sizes
+            inner_labels = []
+            max_size = max(inner_sizes) if inner_sizes else 1  # Avoid division by zero
+            for i, count in enumerate(inner_sizes):
+                status = status_order[inner_colors[i] == status_colors][0]
+                inner_labels.append(status if count > max_size * 0.05 else "")
+
+            # Plot outer pie
+            wedges, texts, autotexts = ax_nested_disc.pie(
+                outer_sizes,
+                labels=outer_labels,
+                autopct="%1.1f%%",
+                startangle=90,
+                radius=1.0,
+                wedgeprops=dict(width=0.3, edgecolor='w'),
+                colors=outer_colors
+            )
+
+            # Plot inner pie
+            wedges_inner, texts_inner, autotexts_inner = ax_nested_disc.pie(
+                inner_sizes,
+                labels=inner_labels,
+                autopct="%1.1f%%",
+                startangle=90,
+                radius=0.7,
+                wedgeprops=dict(width=0.3, edgecolor='w'),
+                colors=inner_colors,
+                labeldistance=0.7
+            )
+
+            ax_nested_disc.set_title("Documents by Discipline and Status", fontsize=10)
+            plt.tight_layout()
+            st.pyplot(fig_nested_disc)
 
     # Prepare data for Area nested pie chart
     area_counts = df.groupby("Area").size()
-    area_status_counts = df.groupby(["Area", "Doc_Status"]).size().unstack(fill_value=0)
-    area_status_counts = area_status_counts.reindex(columns=status_order, fill_value=0)
+    if area_counts.empty:
+        st.warning("No Area data available for pie chart.")
+    else:
+        area_status_counts = df.groupby(["Area", "Doc_Status"]).size().unstack(fill_value=0)
+        area_status_counts = area_status_counts.reindex(columns=status_order, fill_value=0)
 
-    # Create two columns for side-by-side nested pie charts
-    col1, col2 = st.columns(2)
+        with col2:
+            st.write("**Document Status by Area**")
+            fig_nested_area, ax_nested_area = plt.subplots(figsize=(6, 6))
 
-    with col1:
-        st.write("**Document Status by Discipline**")
-        fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(6, 6))
+            # Outer pie (Area)
+            outer_labels = area_counts.index
+            outer_sizes = area_counts.values
+            outer_colors = plt.cm.tab20(np.linspace(0, 1, len(outer_labels)))
 
-        # Outer pie (Discipline)
-        outer_labels = disc_counts.index
-        outer_sizes = disc_counts.values
-        outer_colors = plt.cm.tab20(np.linspace(0, 1, len(outer_labels)))
+            # Inner pie (Status within each Area)
+            inner_sizes = []
+            inner_colors = []
+            status_colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99']  # Colors for statuses
 
-        # Inner pie (Status within each Discipline)
-        inner_sizes = []
-        inner_colors = []
-        status_colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99']  # Colors for statuses
+            # Collect inner sizes and colors first
+            for area in area_counts.index:
+                for status in status_order:
+                    count = area_status_counts.loc[area, status]
+                    if count > 0:
+                        inner_sizes.append(count)
+                        inner_colors.append(status_colors[status_order.index(status)])
 
-        # Collect inner sizes and colors first
-        for disc in disc_counts.index:
-            for status in status_order:
-                count = disc_status_counts.loc[disc, status]
-                if count > 0:
-                    inner_sizes.append(count)
-                    inner_colors.append(status_colors[status_order.index(status)])
+            # Assign labels after collecting sizes
+            inner_labels = []
+            max_size = max(inner_sizes) if inner_sizes else 1  # Avoid division by zero
+            for i, count in enumerate(inner_sizes):
+                status = status_order[inner_colors[i] == status_colors][0]
+                inner_labels.append(status if count > max_size * 0.05 else "")
 
-        # Assign labels after collecting sizes
-        inner_labels = []
-        max_size = max(inner_sizes) if inner_sizes else 1  # Avoid division by zero
-        for i, count in enumerate(inner_sizes):
-            status = status_order[inner_colors[i] == status_colors][0]
-            inner_labels.append(status if count > max_size * 0.05 else "")
+            # Plot outer pie
+            wedges, texts, autotexts = ax_nested_area.pie(
+                outer_sizes,
+                labels=outer_labels,
+                autopct="%1.1f%%",
+                startangle=90,
+                radius=1.0,
+                wedgeprops=dict(width=0.3, edgecolor='w'),
+                colors=outer_colors
+            )
 
-        # Plot outer pie
-        wedges, texts, autotexts = ax_nested_disc.pie(
-            outer_sizes,
-            labels=outer_labels,
-            startangle=90,
-            radius=1.0,
-            wedgeprops=dict(width=0.3, edgecolor='w'),
-            colors=outer_colors
-        )
+            # Plot inner pie
+            wedges_inner, texts_inner, autotexts_inner = ax_nested_area.pie(
+                inner_sizes,
+                labels=inner_labels,
+                autopct="%1.1f%%",
+                startangle=90,
+                radius=0.7,
+                wedgeprops=dict(width=0.3, edgecolor='w'),
+                colors=inner_colors,
+                labeldistance=0.7
+            )
 
-        # Plot inner pie
-        ax_nested_disc.pie(
-            inner_sizes,
-            labels=inner_labels,
-            startangle=90,
-            radius=0.7,
-            wedgeprops=dict(width=0.3, edgecolor='w'),
-            colors=inner_colors,
-            labeldistance=0.7
-        )
-
-        ax_nested_disc.set_title("Documents by Discipline and Status", fontsize=10)
-        plt.tight_layout()
-        st.pyplot(fig_nested_disc)
-
-    with col2:
-        st.write("**Document Status by Area**")
-        fig_nested_area, ax_nested_area = plt.subplots(figsize=(6, 6))
-
-        # Outer pie (Area)
-        outer_labels = area_counts.index
-        outer_sizes = area_counts.values
-        outer_colors = plt.cm.tab20(np.linspace(0, 1, len(outer_labels)))
-
-        # Inner pie (Status within each Area)
-        inner_sizes = []
-        inner_colors = []
-        status_colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99']  # Colors for statuses
-
-        # Collect inner sizes and colors first
-        for area in area_counts.index:
-            for status in status_order:
-                count = area_status_counts.loc[area, status]
-                if count > 0:
-                    inner_sizes.append(count)
-                    inner_colors.append(status_colors[status_order.index(status)])
-
-        # Assign labels after collecting sizes
-        inner_labels = []
-        max_size = max(inner_sizes) if inner_sizes else 1  # Avoid division by zero
-        for i, count in enumerate(inner_sizes):
-            status = status_order[inner_colors[i] == status_colors][0]
-            inner_labels.append(status if count > max_size * 0.05 else "")
-
-        # Plot outer pie
-        wedges, texts, autotexts = ax_nested_area.pie(
-            outer_sizes,
-            labels=outer_labels,
-            startangle=90,
-            radius=1.0,
-            wedgeprops=dict(width=0.3, edgecolor='w'),
-            colors=outer_colors
-        )
-
-        # Plot inner pie
-        ax_nested_area.pie(
-            inner_sizes,
-            labels=inner_labels,
-            startangle=90,
-            radius=0.7,
-            wedgeprops=dict(width=0.3, edgecolor='w'),
-            colors=inner_colors,
-            labeldistance=0.7
-        )
-
-        ax_nested_area.set_title("Documents by Area and Status", fontsize=10)
-        plt.tight_layout()
-        st.pyplot(fig_nested_area)
+            ax_nested_area.set_title("Documents by Area and Status", fontsize=10)
+            plt.tight_layout()
+            st.pyplot(fig_nested_area)
 
     # --------------------------
     # 11) STACKED BAR IFR/IFA/IFT BY DISCIPLINE

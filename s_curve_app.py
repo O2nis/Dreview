@@ -568,19 +568,18 @@ def main():
             )
             wedges_outer, texts_outer, autotexts_outer = outer_result
             for autotext in autotexts_outer:
-                autotext.set_fontsize(8)
-                autotext.set_fontweight('normal')
-                # Split text into name and number
                 text = autotext.get_text()
                 name, number = text.split('\n')
-                autotext.set_text(f"{name}\n{number}")
-                autotext.set_fontproperties({'size': 8, 'weight': 'normal'})
-                # Add bold number below
+                # Set Discipline name (regular, smaller font)
+                autotext.set_text(name)
+                autotext.set_fontsize(8)
+                autotext.set_fontweight('normal')
+                # Add count below (bold, larger font)
                 wedge_center = autotext.get_position()
                 ax_nested_disc.annotate(
                     number,
                     xy=wedge_center,
-                    xytext=(0, -5),
+                    xytext=(0, -10),
                     textcoords="offset points",
                     fontsize=10,
                     fontweight='bold',

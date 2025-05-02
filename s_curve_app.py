@@ -693,50 +693,101 @@ def main():
 
     st.write("Detailed Delay Data:")
     st.dataframe(disc_delay)
+    # --------------------------
+    # 13) NESTED DONUT CHARTS BY DISCIPLINE & AREA (SEPARATED)
+    # --------------------------
+    st.subheader("Nested Donut Charts")
 
-    # --------------------------
-    # 13) FINAL MILESTONE + STATUS STACKED BAR
-    # --------------------------
-    def get_final_milestone(row):
+    from matplotlib.patches import Patch
+
+    # Define milestone mapping
+    status_labels = ["Issued By EPC", "Review By OE", "Completed", "Not Yet Issued"]
+    status_colors = {
+        "Issued By EPC": "#66c2a5",
+        "Review By OE": "#fc8d62",
+        "Completed": "#8da0cb",
+        "Not Yet Issued": "#e78ac3"
+    }
+
+    # Function to classify document status for donut segmentation
+    def classify_status(row):
         if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
-            return "Reply By EPC"
+            return "Completed"
         elif pd.notna(row["Review By OE"]):
             return "Review By OE"
         elif pd.notna(row["Issued By EPC"]):
             return "Issued By EPC"
         else:
-            return "NO ISSUANCE"
+            return "Not Yet Issued"
 
-    df["FinalMilestone"] = df.apply(get_final_milestone, axis=1)
+     # Apply classification
+    st.write("**Document Breakdown by Discipline**")
+    df["DonutStatus"] = df.apply(classify_status, axis=1)
+    outer_counts = df["Discipline"].value_counts().sort_index()
+    outer_labels = outer_counts.index.tolist()
+    outer_sizes = outer_counts.tolist()
+    inner_data = df.groupby(["Discipline", "DonutStatus"]).size().reset_index(name="count")
+    inner_sizes = inner_data["count"].tolist()
+    inner_labels = inner_data["count"].astype(str).tolist()
+    inner_colors = [status_colors.get(x, "#cccccc") for x in inner_data["DonutStatus"]]
 
-    st.subheader("Documents by Final Milestone (Stacked by Status)")
-    group_df = (
-        df.groupby(["FinalMilestone","Status"])["ID"]
-          .count()
-          .reset_index(name="Count")
+    fig, ax = plt.subplots(figsize=(6.5, 6.5))
+    ax.axis('equal')
+    ax.pie(
+        outer_sizes,
+        radius=1,
+        labels=outer_labels,
+        labeldistance=0.85,
+        wedgeprops=dict(width=0.3, edgecolor='w')
     )
-    pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
-    pivoted = pivoted.reindex(["Issued By EPC","Review By OE","Reply By EPC"]).dropna(how="all")
-
-    fig_status, ax_status = plt.subplots(figsize=(7,5))
-    pivoted.plot(kind="bar", stacked=True, ax=ax_status)
-
-    for container in ax_status.containers:
-        ax_status.bar_label(
-            container,
-            label_type='center',
-            fmt='%d',
-            fontsize=8,
-            color='white'
-        )
-
-    ax_status.set_title("Documents by Final Milestone (Stacked by Status)", fontsize=10)
-    ax_status.set_xlabel("Final Milestone", fontsize=9)
-    ax_status.set_ylabel("Number of Documents", fontsize=9)
-    ax_status.legend(title="Status", fontsize=8)
-    plt.setp(ax_status.get_xticklabels(), rotation=45, ha='right', fontsize=8)
+    ax.pie(
+        inner_sizes,
+        radius=0.7,
+        labels=inner_labels,
+        labeldistance=0.7,
+        colors=inner_colors,
+        wedgeprops=dict(width=0.3, edgecolor='w')
+    )
+    legend_elements = [Patch(facecolor=status_colors[s], label=s) for s in status_labels]
+    ax.legend(handles=legend_elements, loc="center left", bbox_to_anchor=(1, 0.5), title="Milestone")
+    ax.set_title("Documents by Discipline and Status", fontsize=12)
     plt.tight_layout()
-    st.pyplot(fig_status)
+    st.pyplot(fig)
+
+    # Area-based donut chart
+    st.write("**Document Breakdown by Area**")
+    df["DonutStatus"] = df.apply(classify_status, axis=1)
+    outer_counts = df["Area"].value_counts().sort_index()
+    outer_labels = outer_counts.index.tolist()
+    outer_sizes = outer_counts.tolist()
+    inner_data = df.groupby(["Area", "DonutStatus"]).size().reset_index(name="count")
+    inner_sizes = inner_data["count"].tolist()
+    inner_labels = inner_data["count"].astype(str).tolist()
+    inner_colors = [status_colors.get(x, "#cccccc") for x in inner_data["DonutStatus"]]
+
+    fig, ax = plt.subplots(figsize=(6.5, 6.5))
+    ax.axis('equal')
+    ax.pie(
+        outer_sizes,
+        radius=1,
+        labels=outer_labels,
+        labeldistance=0.85,
+        wedgeprops=dict(width=0.3, edgecolor='w')
+    )
+    ax.pie(
+        inner_sizes,
+        radius=0.7,
+        labels=inner_labels,
+        labeldistance=0.7,
+        colors=inner_colors,
+        wedgeprops=dict(width=0.3, edgecolor='w')
+    )
+    legend_elements = [Patch(facecolor=status_colors[s], label=s) for s in status_labels]
+    ax.legend(handles=legend_elements, loc="center left", bbox_to_anchor=(1, 0.5), title="Milestone")
+    ax.set_title("Documents by Area and Status", fontsize=12)
+    plt.tight_layout()
+    st.pyplot(fig)
+
 
     # --------------------------
     # 14) SAVE UPDATED CSV

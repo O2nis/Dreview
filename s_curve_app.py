@@ -500,7 +500,7 @@ def main():
         fig_ifr, ax_ifr = plt.subplots(figsize=(4,4))
         ax_ifr.pie(
             ifr_values,
-            labels=["Issued by EPC", "Not Yet Issued"],
+            labels=["Issued12 by EPC", "Not Yet Issued"],
             autopct=ifr_autopct,
             startangle=140,
             wedgeprops={"width":0.4}
@@ -511,29 +511,16 @@ def main():
     # --------------------------
     # 10) NESTED PIE CHARTS FOR DISCIPLINE AND AREA
     # --------------------------
-    st.subheader("Nested Pie Charts: Document Status by Discipline and Area")
+    st.subheader("Nested Pie Charts: Document Completion by Discipline and Area")
 
     # Helper function to determine document status
     def get_doc_status(row):
         if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
             return "Completed"
-        elif pd.notna(row["Review By OE"]):
-            return "Review by OE"
-        elif pd.notna(row["Issued by EPC"]):
-            return "Issued by EPC"
         else:
-            return "Not Yet Issued"
+            return "Incomplete"
 
     df["Doc_Status"] = df.apply(get_doc_status, axis=1)
-
-    # Custom autopct function to show document counts with threshold
-    def doc_count_autopct(pct, allvals):
-        absolute = int(round(pct * sum(allvals) / 100.0))
-        max_val = max(allvals) if allvals else 1
-        # Only show counts for wedges > 5% of max value to reduce clutter
-        if absolute >= 0.05 * max_val:
-            return f"{absolute}"
-        return ""
 
     # Prepare data for Discipline nested pie chart
     disc_counts = df.groupby("Discipline").size()
@@ -541,15 +528,15 @@ def main():
         st.warning("No Discipline data available for pie chart.")
     else:
         disc_status_counts = df.groupby(["Discipline", "Doc_Status"]).size().unstack(fill_value=0)
-        # Ensure all status categories are present
-        status_order = ["Not Yet Issued", "Issued by EPC", "Review by OE", "Completed"]
+        # Ensure both status categories are present
+        status_order = ["Incomplete", "Completed"]
         disc_status_counts = disc_status_counts.reindex(columns=status_order, fill_value=0)
 
         # Create two columns for side-by-side nested pie charts
         col1, col2 = st.columns(2)
 
         with col1:
-            st.write("**Document Status by Discipline**")
+            st.write("**Document Completion by Discipline**")
             fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(6, 6))
 
             # Outer pie (Discipline)
@@ -557,10 +544,10 @@ def main():
             outer_sizes = disc_counts.values
             outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff", "#0059b3"]  # Shades of blue
 
-            # Inner pie (Status within each Discipline)
+            # Inner pie (Completion within each Discipline)
             inner_sizes = []
             inner_colors = []
-            status_colors = ["#d9d9d9", "#b3b3b3", "#808080", "#4d4d4d"]  # Shades of gray
+            status_colors = ["#d9d9d9", "#808080"]  # Shades of gray: Incomplete, Completed
 
             # Collect inner sizes and colors for each Discipline
             for disc in disc_counts.index:
@@ -569,26 +556,24 @@ def main():
                     inner_sizes.append(count)
                     inner_colors.append(status_colors[status_order.index(status)])
 
-            # Plot outer pie
+            # Plot outer pie with bold numbers
             wedges_outer, texts_outer, autotexts_outer = ax_nested_disc.pie(
                 outer_sizes,
-                autopct=lambda pct: doc_count_autopct(pct, outer_sizes),
+                autopct="%1.0f",
                 startangle=90,
                 radius=1.0,
                 wedgeprops=dict(width=0.3, edgecolor='w'),
                 colors=outer_colors,
-                textprops={'fontsize': 6}
+                textprops={'fontsize': 10, 'fontweight': 'bold'}
             )
 
-            # Plot inner pie
+            # Plot inner pie without numbers
             wedges_inner, texts_inner, autotexts_inner = ax_nested_disc.pie(
                 inner_sizes,
-                autopct=lambda pct: doc_count_autopct(pct, inner_sizes),
                 startangle=90,
                 radius=0.7,
                 wedgeprops=dict(width=0.3, edgecolor='w'),
-                colors=inner_colors,
-                textprops={'fontsize': 6}
+                colors=inner_colors
             )
 
             # Create legends
@@ -608,7 +593,7 @@ def main():
                 fontsize=8
             )
 
-            ax_nested_disc.set_title("Documents by Discipline and Status", fontsize=10)
+            ax_nested_disc.set_title("Documents by Discipline and Completion", fontsize=10)
             plt.tight_layout()
             st.pyplot(fig_nested_disc)
 
@@ -621,7 +606,7 @@ def main():
         area_status_counts = area_status_counts.reindex(columns=status_order, fill_value=0)
 
         with col2:
-            st.write("**Document Status by Area**")
+            st.write("**Document Completion by Area**")
             fig_nested_area, ax_nested_area = plt.subplots(figsize=(6, 6))
 
             # Outer pie (Area)
@@ -629,10 +614,10 @@ def main():
             outer_sizes = area_counts.values
             outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff", "#0059b3", "#003366"]  # Shades of blue
 
-            # Inner pie (Status within each Area)
+            # Inner pie (Completion within each Area)
             inner_sizes = []
             inner_colors = []
-            status_colors = ["#d9d9d9", "#b3b3b3", "#808080", "#4d4d4d"]  # Shades of gray
+            status_colors = ["#d9d9d9", "#808080"]  # Shades of gray: Incomplete, Completed
 
             # Collect inner sizes and colors for each Area
             for area in area_counts.index:
@@ -641,26 +626,24 @@ def main():
                     inner_sizes.append(count)
                     inner_colors.append(status_colors[status_order.index(status)])
 
-            # Plot outer pie
+            # Plot outer pie with bold numbers
             wedges_outer, texts_outer, autotexts_outer = ax_nested_area.pie(
                 outer_sizes,
-                autopct=lambda pct: doc_count_autopct(pct, outer_sizes),
+                autopct="%1.0f",
                 startangle=90,
                 radius=1.0,
                 wedgeprops=dict(width=0.3, edgecolor='w'),
                 colors=outer_colors,
-                textprops={'fontsize': 6}
+                textprops={'fontsize': 10, 'fontweight': 'bold'}
             )
 
-            # Plot inner pie
+            # Plot inner pie without numbers
             wedges_inner, texts_inner, autotexts_inner = ax_nested_area.pie(
                 inner_sizes,
-                autopct=lambda pct: doc_count_autopct(pct, inner_sizes),
                 startangle=90,
                 radius=0.7,
                 wedgeprops=dict(width=0.3, edgecolor='w'),
-                colors=inner_colors,
-                textprops={'fontsize': 6}
+                colors=inner_colors
             )
 
             # Create legends
@@ -680,7 +663,7 @@ def main():
                 fontsize=8
             )
 
-            ax_nested_area.set_title("Documents by Area and Status", fontsize=10)
+            ax_nested_area.set_title("Documents by Area and Completion", fontsize=10)
             plt.tight_layout()
             st.pyplot(fig_nested_area)
 

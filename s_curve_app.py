@@ -551,17 +551,42 @@ def main():
         if not inner_sizes or sum(inner_sizes) == 0:
             st.warning("No valid data for inner pie chart (Discipline). All counts are zero or empty.")
         else:
-            # Plot outer pie with bold numbers
+            # Custom autopct for outer pie (Discipline name + count)
+            def outer_autopct(pct, allvals, labels):
+                absolute = int(round(pct * sum(allvals) / 100.0))
+                return f"{labels[outer_sizes.tolist().index(absolute)]}\n{absolute}"
+
+            # Plot outer pie with names and counts
             outer_result = ax_nested_disc.pie(
                 outer_sizes,
-                autopct="%1.0f",
+                autopct=lambda pct: outer_autopct(pct, outer_sizes, outer_labels),
                 startangle=90,
                 radius=1.0,
                 wedgeprops=dict(width=0.3, edgecolor='w'),
                 colors=outer_colors,
-                textprops={'fontsize': 10, 'fontweight': 'bold'}
+                textprops={'fontsize': 8, 'ha': 'center', 'va': 'center'}
             )
             wedges_outer, texts_outer, autotexts_outer = outer_result
+            for autotext in autotexts_outer:
+                autotext.set_fontsize(8)
+                autotext.set_fontweight('normal')
+                # Split text into name and number
+                text = autotext.get_text()
+                name, number = text.split('\n')
+                autotext.set_text(f"{name}\n{number}")
+                autotext.set_fontproperties({'size': 8, 'weight': 'normal'})
+                # Add bold number below
+                wedge_center = autotext.get_position()
+                ax_nested_disc.annotate(
+                    number,
+                    xy=wedge_center,
+                    xytext=(0, -5),
+                    textcoords="offset points",
+                    fontsize=10,
+                    fontweight='bold',
+                    ha='center',
+                    va='center'
+                )
 
             # Plot inner pie (one wedge per document)
             try:
@@ -581,16 +606,6 @@ def main():
                 plt.close(fig_nested_disc)
                 st.stop()
 
-            # Create legends
-            outer_legend = ax_nested_disc.legend(
-                wedges_outer,
-                outer_labels,
-                title="Disciplines",
-                loc="center left",
-                bbox_to_anchor=(1, 0.5),
-                fontsize=8
-            )
-            ax_nested_disc.add_artist(outer_legend)
             # Create status legend using dummy patches
             from matplotlib.patches import Patch
             status_patches = [
@@ -601,7 +616,7 @@ def main():
                 handles=status_patches,
                 title="Status",
                 loc="center left",
-                bbox_to_anchor=(1, 0.2),
+                bbox_to_anchor=(1, 0.5),
                 fontsize=8
             )
 

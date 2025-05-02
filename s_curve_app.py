@@ -734,7 +734,7 @@ def main():
     ax_status.set_xlabel("Final Milestone", fontsize=9)
     ax_status.set_ylabel("Number of Documents", fontsize=9)
     ax_status.legend(title="Status", fontsize=8)
-    plt.xticks(rotation=45, ha='right', fontsize=8)
+    plt.setp(ax_status.get_xticklabels(), rotation=45, ha='right', fontsize=8)
     plt.tight_layout()
     st.pyplot(fig_status)
 

@@ -48,7 +48,7 @@ def main():
     INITIAL_DATE = st.sidebar.date_input("Initial Date for Expected Calculations", value=pd.to_datetime("2024-08-01"))
     IFR_WEIGHT = st.sidebar.number_input("Issued By EPC Weight", value=0.40, step=0.05)
     IFA_WEIGHT = st.sidebar.number_input("Review By OE Weight", value=0.30, step=0.05)
-    IFT_WEIGHT = st.sidebar.number_input("Reply By EPC Weight (only if Flag=1)", value=0.30, step=0.05)
+    IFT_WEIGHT = st.sidebar.number_input("Reply By EPC Weight", value=0.30, step=0.05)
     RECOVERY_FACTOR = st.sidebar.number_input("Recovery Factor", value=0.75, step=0.05)
 
     IFA_DELTA_DAYS = st.sidebar.number_input("Days to add for Expected Review", value=10, step=1)
@@ -60,11 +60,26 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Visualization Settings")
     seaborn_style = st.sidebar.selectbox(
-        "Select Seaborn Style",
+        "Seaborn Style",
         ["darkgrid", "whitegrid", "dark", "white", "ticks"],
         index=1
     )
+    seaborn_context = st.sidebar.selectbox(
+        "Seaborn Context",
+        ["paper", "notebook", "talk", "poster"],
+        index=1
+    )
+    seaborn_palette = st.sidebar.selectbox(
+        "Seaborn Palette (Bar/Donut/Pie Charts)",
+        ["deep", "muted", "bright", "pastel", "dark", "colorblind", "Set1", "Set2", "Set3"],
+        index=0
+    )
+    font_scale = st.sidebar.slider("Font Scale", min_value=0.5, max_value=2.0, value=1.0, step=0.1)
+    show_grid = st.sidebar.checkbox("Show Grid Lines", value=True)
+
+    # Apply Seaborn settings
     sns.set_style(seaborn_style)
+    sns.set_context(seaborn_context, font_scale=font_scale)
 
     st.sidebar.markdown("### S-Curve Color Scheme")
     actual_color = st.sidebar.color_picker("Actual Progress Color", "#1f77b4")
@@ -72,12 +87,6 @@ def main():
     projected_color = st.sidebar.color_picker("Projected Recovery Color", "#2ca02c")
     today_color = st.sidebar.color_picker("Today Line Color", "#000000")
     end_date_color = st.sidebar.color_picker("End Date Line Color", "#d62728")
-
-    st.sidebar.markdown("### Bar/Donut Color Scheme")
-    color_choice = st.sidebar.selectbox(
-        "Select Color Scheme (applies to bar/donut charts):",
-        ["Standard", "Shades of Blue", "Shades of Green"]
-    )
 
     if CSV_INPUT_PATH is None:
         st.warning("Please upload your input CSV file or download the template above.")
@@ -177,7 +186,7 @@ def main():
                 a_val += IFR_WEIGHT
             if pd.notna(row["Review By OE"]) and row["Review By OE"] <= current_date:
                 a_val += IFA_WEIGHT
-            if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= current_date and row["Flag"] == 1:
+            if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= current_date:
                 a_val += IFT_WEIGHT
             if a_val > 0:
                 has_progress = True
@@ -318,7 +327,8 @@ def main():
     ax.set_title("S-Curve with Delay Recovery", fontsize=12)
     ax.set_xlabel("Date", fontsize=10)
     ax.set_ylabel(y_label, fontsize=10)
-    ax.grid(True)
+    if show_grid:
+        ax.grid(True)
     ax.legend(fontsize=9)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b-%Y"))
     plt.xticks(rotation=45)
@@ -387,16 +397,10 @@ def main():
     # --------------------------
     # 7) COLOR SCHEME FOR OTHER CHARTS
     # --------------------------
-    standard_cycler = plt.rcParamsDefault['axes.prop_cycle']
-    blue_cycler = cycler(color=["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff"])
-    green_cycler = cycler(color=["#ccffcc", "#99ff99", "#66ff66", "#33cc33", "#009900"])
-
-    if color_choice == "Shades of Blue":
-        plt.rc("axes", prop_cycle=blue_cycler)
-    elif color_choice == "Shades of Green":
-        plt.rc("axes", prop_cycle=green_cycler)
-    else:
-        plt.rc("axes", prop_cycle=standard_cycler)
+    # Use Seaborn palette for bar/donut/pie charts
+    palette_colors = sns.color_palette(seaborn_palette, n_colors=10)
+    palette_cycler = cycler(color=palette_colors)
+    plt.rc("axes", prop_cycle=palette_cycler)
 
     # --------------------------
     # 8) ACTUAL vs EXPECTED HOURS BY DISCIPLINE
@@ -410,7 +414,7 @@ def main():
             a_prog += IFR_WEIGHT
         if pd.notna(row["Review By OE"]) and row["Review By OE"] <= end_date:
             a_prog += IFA_WEIGHT
-        if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= end_date and row["Flag"] == 1:
+        if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= end_date:
             a_prog += IFT_WEIGHT
 
         e_prog = 0.0
@@ -461,6 +465,8 @@ def main():
     ax2.set_xticks(ticks=x)
     ax2.set_xticklabels(by_disc.index, rotation=45, ha='right', fontsize=8)
     ax2.legend(fontsize=8)
+    if show_grid:
+        ax2.grid(True)
     plt.tight_layout()
     st.pyplot(fig2)
 
@@ -533,18 +539,18 @@ def main():
         # Outer pie (Discipline)
         outer_labels = disc_counts.index
         outer_sizes = disc_counts.values
-        outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff", "#0059b3"]  # Your original blue shades
+        outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff", "#0059b3"]
 
         # Inner pie (One wedge per document)
         inner_sizes = []
         inner_colors = []
-        status_colors = {"Completed": "#808080", "Incomplete": "#F0F0F0"}  # Gray for Completed, Light gray for Incomplete
+        status_colors = {"Completed": "#808080", "Incomplete": "#F0F0F0"}
 
         # Collect inner sizes (1 per document) and colors
         for disc in disc_counts.index:
             disc_docs = df[df["Discipline"] == disc]
             for _, row in disc_docs.iterrows():
-                inner_sizes.append(1)  # Equal size for each document
+                inner_sizes.append(1)
                 inner_colors.append(status_colors[row["Doc_Status"]])
 
         # Validate inner_sizes
@@ -642,6 +648,8 @@ def main():
     ax4.set_title("Document Milestone Status by Discipline", fontsize=10)
     plt.xticks(fontsize=8)
     plt.yticks(fontsize=8)
+    if show_grid:
+        ax4.grid(True)
     plt.tight_layout()
     for container in ax4.containers:
         ax4.bar_label(container, label_type='center', fontsize=8)
@@ -661,7 +669,7 @@ def main():
             a_val += IFR_WEIGHT
         if pd.notna(row["Review By OE"]) and row["Review By OE"] <= today_date:
             a_val += IFA_WEIGHT
-        if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= today_date and row["Flag"] == 1:
+        if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= today_date:
             a_val += IFT_WEIGHT
 
         e_val = 0.0
@@ -692,7 +700,8 @@ def main():
     ax_delay.set_ylabel("Delay (%)", fontsize=9)
     ax_delay.set_xticks(range(len(disc_delay.index)))
     ax_delay.set_xticklabels(disc_delay.index, rotation=45, ha='right', fontsize=8)
-    ax_delay.grid(True)
+    if show_grid:
+        ax_delay.grid(True)
     plt.tight_layout()
     st.pyplot(fig_delay)
 
@@ -703,7 +712,7 @@ def main():
     # 13) FINAL MILESTONE + STATUS STACKED BAR
     # --------------------------
     def get_final_milestone(row):
-        if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
+        if pd.notna(row["Reply By EPC"]):
             return "Reply By EPC"
         elif pd.notna(row["Review By OE"]):
             return "Review By OE"
@@ -741,6 +750,8 @@ def main():
     ax_status.set_xticks(range(len(pivoted.index)))
     ax_status.set_xticklabels(pivoted.index, rotation=45, ha='right', fontsize=8)
     ax_status.legend(title="Status", fontsize=8)
+    if show_grid:
+        ax_status.grid(True)
     plt.tight_layout()
     st.pyplot(fig_status)
 

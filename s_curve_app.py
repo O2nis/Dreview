@@ -6,7 +6,6 @@ import datetime as dt
 import numpy as np
 import seaborn as sns
 from cycler import cycler
-import uuid
 
 plt.rcParams.update({'font.size': 8})
 
@@ -124,7 +123,7 @@ def main():
     df["Reply By EPC"] = df["Reply By EPC"].apply(parse_date)
 
     df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
-    df["Man Hours"] = pd.to_numeric(df["Man Hours]"], errors="coerce").fillna(0)
+    df["Man Hours"] = pd.to_numeric(df["Man Hours"], errors="coerce").fillna(0)
     df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
 
     df["Issuance Expected"] = pd.Timestamp(INITIAL_DATE) + pd.to_timedelta(df["Schedule [Days]"], unit="D")
@@ -511,132 +510,115 @@ def main():
         st.pyplot(fig_ifr)
 
     # --------------------------
-    # 10) NESTED PIE CHARTS FOR DISCIPLINE AND AREA
+    # 10) NESTED PIE CHARTS BY DISCIPLINE AND AREA
     # --------------------------
-    st.subheader("Nested Pie Charts: Document Status by Discipline and Area")
+    st.subheader("Document Status Distribution")
 
-    # Helper function to determine document status
-    def get_doc_status(row):
-        if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
-            return "Completed"
-        elif pd.notna(row["Review By OE"]):
-            return "Review by OE"
-        elif pd.notna(row["Issued By EPC"]):
-            return "Issued by EPC"
-        else:
-            return "Not Yet Issued"
+    # Create document status categories
+    conditions = [
+        (df['Issued By EPC'].isna()),  # Not Issued
+        (df['Issued By EPC'].notna() & df['Review By OE'].isna()),  # Issued By EPC
+        (df['Review By OE'].notna() & ((df['Flag'] == 0) | (df['Reply By EPC'].isna())),  # Review By OE
+        (df['Flag'] == 1) & df['Reply By EPC'].notna()  # Completed
+    ]
+    choices = ['Not Issued', 'Issued By EPC', 'Review By OE', 'Completed']
+    df['Doc_Status'] = np.select(conditions, choices, default='Unknown')
 
-    df["Doc_Status"] = df.apply(get_doc_status, axis=1)
+    # Discipline nested pie
+    st.write("**By Discipline**")
+    fig_disc, ax_disc = plt.subplots(figsize=(10, 8))
+    
+    # Group data by Discipline and Status
+    disc_status = df.groupby(['Discipline', 'Doc_Status']).size().unstack().fillna(0)
+    
+    # Outer pie - Discipline totals
+    outer_sizes = disc_status.sum(axis=1)
+    outer_colors = plt.cm.tab20c(np.arange(len(outer_sizes)))
+    outer_labels = [f"{disc}\n({size} docs)" for disc, size in zip(outer_sizes.index, outer_sizes)]
+    
+    wedges_outer, _ = ax_disc.pie(
+        outer_sizes,
+        radius=1.3,
+        labels=outer_labels,
+        labeldistance=0.85,
+        colors=outer_colors,
+        wedgeprops=dict(width=0.3, edgecolor='w'),
+        textprops=dict(fontsize=9)
+    )
+    
+    # Inner pie - Status by discipline
+    inner_sizes = disc_status.values.flatten()
+    inner_colors = []
+    status_colors = {
+        'Not Issued': '#ff9999',
+        'Issued By EPC': '#66b3ff',
+        'Review By OE': '#99ff99',
+        'Completed': '#c2c2f0'
+    }
+    
+    for discipline in disc_status.index:
+        for status in disc_status.columns:
+            inner_colors.append(status_colors[status])
+    
+    wedges_inner, _ = ax_disc.pie(
+        inner_sizes,
+        radius=1.0,
+        colors=inner_colors,
+        wedgeprops=dict(width=0.4, edgecolor='w')
+    )
+    
+    # Add legend for statuses
+    legend_elements = [plt.Rectangle((0,0),1,1, fc=color, label=status) 
+                      for status, color in status_colors.items()]
+    ax_disc.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.3, 1))
+    
+    ax_disc.set_title("Document Status by Discipline", fontsize=12)
+    plt.tight_layout()
+    st.pyplot(fig_disc)
 
-    # Prepare data for Discipline nested pie chart
-    disc_counts = df.groupby("Discipline").size()
-    disc_status_counts = df.groupby(["Discipline", "Doc_Status"]).size().unstack(fill_value=0)
-    # Ensure all status categories are present
-    status_order = ["Not Yet Issued", "Issued by EPC", "Review by OE", "Completed"]
-    disc_status_counts = disc_status_counts.reindex(columns=status_order, fill_value=0)
-
-    # Prepare data for Area nested pie chart
-    area_counts = df.groupby("Area").size()
-    area_status_counts = df.groupby(["Area", "Doc_Status"]).size().unstack(fill_value=0)
-    area_status_counts = area_status_counts.reindex(columns=status_order, fill_value=0)
-
-    # Create two columns for side-by-side nested pie charts
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.write("**Document Status by Discipline**")
-        fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(6, 6))
-
-        # Outer pie (Discipline)
-        outer_labels = disc_counts.index
-        outer_sizes = disc_counts.values
-        outer_colors = plt.cm.tab20(np.linspace(0, 1, len(outer_labels)))
-
-        # Inner pie (Status within each Discipline)
-        inner_sizes = []
-        inner_colors = []
-        inner_labels = []
-        status_colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99']  # Colors for statuses
-
-        for disc in disc_counts.index:
-            for status in status_order:
-                count = disc_status_counts.loc[disc, status]
-                if count > 0:
-                    inner_sizes.append(count)
-                    inner_colors.append(status_colors[status_order.index(status)])
-                    inner_labels.append(status if count > max(inner_sizes) * 0.05 else "")
-
-        # Plot outer pie
-        wedges, texts, autotexts = ax_nested_disc.pie(
-            outer_sizes,
-            labels=outer_labels,
-            startangle=90,
-            radius=1.0,
-            wedgeprops=dict(width=0.3, edgecolor='w'),
-            colors=outer_colors
-        )
-
-        # Plot inner pie
-        ax_nested_disc.pie(
-            inner_sizes,
-            labels=inner_labels,
-            startangle=90,
-            radius=0.7,
-            wedgeprops=dict(width=0.3, edgecolor='w'),
-            colors=inner_colors,
-            labeldistance=0.7
-        )
-
-        ax_nested_disc.set_title("Documents by Discipline and Status", fontsize=10)
-        plt.tight_layout()
-        st.pyplot(fig_nested_disc)
-
-    with col2:
-        st.write("**Document Status by Area**")
-        fig_nested_area, ax_nested_area = plt.subplots(figsize=(6, 6))
-
-        # Outer pie (Area)
-        outer_labels = area_counts.index
-        outer_sizes = area_counts.values
-        outer_colors = plt.cm.tab20(np.linspace(0, 1, len(outer_labels)))
-
-        # Inner pie (Status within each Area)
-        inner_sizes = []
-        inner_colors = []
-        inner_labels = []
-
-        for area in area_counts.index:
-            for status in status_order:
-                count = area_status_counts.loc[area, status]
-                if count > 0:
-                    inner_sizes.append(count)
-                    inner_colors.append(status_colors[status_order.index(status)])
-                    inner_labels.append(status if count > max(inner_sizes) * 0.05 else "")
-
-        # Plot outer pie
-        wedges, texts, autotexts = ax_nested_area.pie(
-            outer_sizes,
-            labels=outer_labels,
-            startangle=90,
-            radius=1.0,
-            wedgeprops=dict(width=0.3, edgecolor='w'),
-            colors=outer_colors
-        )
-
-        # Plot inner pie
-        ax_nested_area.pie(
-            inner_sizes,
-            labels=inner_labels,
-            startangle=90,
-            radius=0.7,
-            wedgeprops=dict(width=0.3, edgecolor='w'),
-            colors=inner_colors,
-            labeldistance=0.7
-        )
-
-        ax_nested_area.set_title("Documents by Area and Status", fontsize=10)
-        plt.tight_layout()
-        st.pyplot(fig_nested_area)
+    # Area nested pie
+    st.write("**By Area**")
+    fig_area, ax_area = plt.subplots(figsize=(10, 8))
+    
+    # Group data by Area and Status
+    area_status = df.groupby(['Area', 'Doc_Status']).size().unstack().fillna(0)
+    
+    # Outer pie - Area totals
+    outer_sizes_area = area_status.sum(axis=1)
+    outer_colors_area = plt.cm.tab20b(np.arange(len(outer_sizes_area)))
+    outer_labels_area = [f"{area}\n({size} docs)" for area, size in zip(outer_sizes_area.index, outer_sizes_area)]
+    
+    wedges_outer_area, _ = ax_area.pie(
+        outer_sizes_area,
+        radius=1.3,
+        labels=outer_labels_area,
+        labeldistance=0.85,
+        colors=outer_colors_area,
+        wedgeprops=dict(width=0.3, edgecolor='w'),
+        textprops=dict(fontsize=9)
+    )
+    
+    # Inner pie - Status by area
+    inner_sizes_area = area_status.values.flatten()
+    inner_colors_area = []
+    
+    for area in area_status.index:
+        for status in area_status.columns:
+            inner_colors_area.append(status_colors[status])
+    
+    wedges_inner_area, _ = ax_area.pie(
+        inner_sizes_area,
+        radius=1.0,
+        colors=inner_colors_area,
+        wedgeprops=dict(width=0.4, edgecolor='w')
+    )
+    
+    # Add legend for statuses
+    ax_area.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.3, 1))
+    
+    ax_area.set_title("Document Status by Area", fontsize=12)
+    plt.tight_layout()
+    st.pyplot(fig_area)
 
     # --------------------------
     # 11) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
@@ -712,9 +694,9 @@ def main():
     st.write("Detailed Delay Data:")
     st.dataframe(disc_delay)
 
-  # --------------------------
-  # 13) FINAL MILESTONE + STATUS STACKED BAR
-  # --------------------------
+    # --------------------------
+    # 13) FINAL MILESTONE + STATUS STACKED BAR
+    # --------------------------
     def get_final_milestone(row):
         if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
             return "Reply By EPC"
@@ -751,9 +733,8 @@ def main():
     ax_status.set_title("Documents by Final Milestone (Stacked by Status)", fontsize=10)
     ax_status.set_xlabel("Final Milestone", fontsize=9)
     ax_status.set_ylabel("Number of Documents", fontsize=9)
-    ax_status.set_xticks(range(len(pivoted.index)))
-    ax_status.set_xticklabels(pivoted.index, rotation=45, ha='right', fontsize=8)
     ax_status.legend(title="Status", fontsize=8)
+    plt.xticks(rotation=45, ha='right', fontsize=8)
     plt.tight_layout()
     st.pyplot(fig_status)
 

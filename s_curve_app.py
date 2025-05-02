@@ -712,49 +712,50 @@ def main():
     st.write("Detailed Delay Data:")
     st.dataframe(disc_delay)
 
-    # --------------------------
-    # 13) FINAL MILESTONE + STATUS STACKED BAR
-    # --------------------------
-    def get_final_milestone(row):
-        if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
-            return "Reply By EPC"
-        elif pd.notna(row["Review By OE"]):
-            return "Review By OE"
-        elif pd.notna(row["Issued By EPC"]):
-            return "Issued By EPC"
-        else:
-            return "NO ISSUANCE"
+  # --------------------------
+# 13) FINAL MILESTONE + STATUS STACKED BAR
+# --------------------------
+def get_final_milestone(row):
+    if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
+        return "Reply By EPC"
+    elif pd.notna(row["Review By OE"]):
+        return "Review By OE"
+    elif pd.notna(row["Issued By EPC"]):
+        return "Issued By EPC"
+    else:
+        return "NO ISSUANCE"
 
-    df["FinalMilestone"] = df.apply(get_final_milestone, axis=1)
+df["FinalMilestone"] = df.apply(get_final_milestone, axis=1)
 
-    st.subheader("Documents by Final Milestone (Stacked by Status)")
-    group_df = (
-        df.groupby(["FinalMilestone","Status"])["ID"]
-          .count()
-          .reset_index(name="Count")
+st.subheader("Documents by Final Milestone (Stacked by Status)")
+group_df = (
+    df.groupby(["FinalMilestone","Status"])["ID"]
+      .count()
+      .reset_index(name="Count")
+)
+pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
+pivoted = pivoted.reindex(["Issued By EPC","Review By OE","Reply By EPC"]).dropna(how="all")
+
+fig_status, ax_status = plt.subplots(figsize=(7,5))
+pivoted.plot(kind="bar", stacked=True, ax=ax_status)
+
+for container in ax_status.containers:
+    ax_status.bar_label(
+        container,
+        label_type='center',
+        fmt='%d',
+        fontsize=8,
+        color='white'
     )
-    pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
-    pivoted = pivoted.reindex(["Issued By EPC","Review By OE","Reply By EPC"]).dropna(how="all")
 
-    fig_status, ax_status = plt.subplots(figsize=(7,5))
-    pivoted.plot(kind="bar", stacked=True, ax=ax_status)
-
-    for container in ax_status.containers:
-        ax_status.bar_label(
-            container,
-            label_type='center',
-            fmt='%d',
-            fontsize=8,
-            color='white'
-        )
-
-    ax_status.set_title("Documents by Final Milestone (Stacked by Status)", fontsize=10)
-    ax_status.set_xlabel("Final Milestone", fontsize=9)
-    ax_status.set_ylabel("Number of Documents", fontsize=9)
-    ax_status.set xticks(rotation=45, ha='right', fontsize=8)
-    ax_status.legend(title="Status", fontsize=8)
-    plt.tight_layout()
-    st.pyplot(fig_status)
+ax_status.set_title("Documents by Final Milestone (Stacked by Status)", fontsize=10)
+ax_status.set_xlabel("Final Milestone", fontsize=9)
+ax_status.set_ylabel("Number of Documents", fontsize=9)
+ax_status.set_xticks(range(len(pivoted.index)))
+ax_status.set_xticklabels(pivoted.index, rotation=45, ha='right', fontsize=8)
+ax_status.legend(title="Status", fontsize=8)
+plt.tight_layout()
+st.pyplot(fig_status)
 
     # --------------------------
     # 14) SAVE UPDATED CSV

@@ -6,6 +6,7 @@ import datetime as dt
 import numpy as np
 import seaborn as sns
 from cycler import cycler
+import uuid
 
 plt.rcParams.update({'font.size': 8})
 
@@ -123,7 +124,7 @@ def main():
     df["Reply By EPC"] = df["Reply By EPC"].apply(parse_date)
 
     df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
-    df["Man Hours"] = pd.to_numeric(df["Man Hours"], errors="coerce").fillna(0)
+    df["Man Hours"] = pd.to_numeric(df["Man Hours]"], errors="coerce").fillna(0)
     df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
 
     df["Issuance Expected"] = pd.Timestamp(INITIAL_DATE) + pd.to_timedelta(df["Schedule [Days]"], unit="D")
@@ -510,7 +511,135 @@ def main():
         st.pyplot(fig_ifr)
 
     # --------------------------
-    # 10) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
+    # 10) NESTED PIE CHARTS FOR DISCIPLINE AND AREA
+    # --------------------------
+    st.subheader("Nested Pie Charts: Document Status by Discipline and Area")
+
+    # Helper function to determine document status
+    def get_doc_status(row):
+        if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
+            return "Completed"
+        elif pd.notna(row["Review By OE"]):
+            return "Review by OE"
+        elif pd.notna(row["Issued By EPC"]):
+            return "Issued by EPC"
+        else:
+            return "Not Yet Issued"
+
+    df["Doc_Status"] = df.apply(get_doc_status, axis=1)
+
+    # Prepare data for Discipline nested pie chart
+    disc_counts = df.groupby("Discipline").size()
+    disc_status_counts = df.groupby(["Discipline", "Doc_Status"]).size().unstack(fill_value=0)
+    # Ensure all status categories are present
+    status_order = ["Not Yet Issued", "Issued by EPC", "Review by OE", "Completed"]
+    disc_status_counts = disc_status_counts.reindex(columns=status_order, fill_value=0)
+
+    # Prepare data for Area nested pie chart
+    area_counts = df.groupby("Area").size()
+    area_status_counts = df.groupby(["Area", "Doc_Status"]).size().unstack(fill_value=0)
+    area_status_counts = area_status_counts.reindex(columns=status_order, fill_value=0)
+
+    # Create two columns for side-by-side nested pie charts
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.write("**Document Status by Discipline**")
+        fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(6, 6))
+
+        # Outer pie (Discipline)
+        outer_labels = disc_counts.index
+        outer_sizes = disc_counts.values
+        outer_colors = plt.cm.tab20(np.linspace(0, 1, len(outer_labels)))
+
+        # Inner pie (Status within each Discipline)
+        inner_sizes = []
+        inner_colors = []
+        inner_labels = []
+        status_colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99']  # Colors for statuses
+
+        for disc in disc_counts.index:
+            for status in status_order:
+                count = disc_status_counts.loc[disc, status]
+                if count > 0:
+                    inner_sizes.append(count)
+                    inner_colors.append(status_colors[status_order.index(status)])
+                    inner_labels.append(status if count > max(inner_sizes) * 0.05 else "")
+
+        # Plot outer pie
+        wedges, texts, autotexts = ax_nested_disc.pie(
+            outer_sizes,
+            labels=outer_labels,
+            startangle=90,
+            radius=1.0,
+            wedgeprops=dict(width=0.3, edgecolor='w'),
+            colors=outer_colors
+        )
+
+        # Plot inner pie
+        ax_nested_disc.pie(
+            inner_sizes,
+            labels=inner_labels,
+            startangle=90,
+            radius=0.7,
+            wedgeprops=dict(width=0.3, edgecolor='w'),
+            colors=inner_colors,
+            labeldistance=0.7
+        )
+
+        ax_nested_disc.set_title("Documents by Discipline and Status", fontsize=10)
+        plt.tight_layout()
+        st.pyplot(fig_nested_disc)
+
+    with col2:
+        st.write("**Document Status by Area**")
+        fig_nested_area, ax_nested_area = plt.subplots(figsize=(6, 6))
+
+        # Outer pie (Area)
+        outer_labels = area_counts.index
+        outer_sizes = area_counts.values
+        outer_colors = plt.cm.tab20(np.linspace(0, 1, len(outer_labels)))
+
+        # Inner pie (Status within each Area)
+        inner_sizes = []
+        inner_colors = []
+        inner_labels = []
+
+        for area in area_counts.index:
+            for status in status_order:
+                count = area_status_counts.loc[area, status]
+                if count > 0:
+                    inner_sizes.append(count)
+                    inner_colors.append(status_colors[status_order.index(status)])
+                    inner_labels.append(status if count > max(inner_sizes) * 0.05 else "")
+
+        # Plot outer pie
+        wedges, texts, autotexts = ax_nested_area.pie(
+            outer_sizes,
+            labels=outer_labels,
+            startangle=90,
+            radius=1.0,
+            wedgeprops=dict(width=0.3, edgecolor='w'),
+            colors=outer_colors
+        )
+
+        # Plot inner pie
+        ax_nested_area.pie(
+            inner_sizes,
+            labels=inner_labels,
+            startangle=90,
+            radius=0.7,
+            wedgeprops=dict(width=0.3, edgecolor='w'),
+            colors=inner_colors,
+            labeldistance=0.7
+        )
+
+        ax_nested_area.set_title("Documents by Area and Status", fontsize=10)
+        plt.tight_layout()
+        st.pyplot(fig_nested_area)
+
+    # --------------------------
+    # 11) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
     # --------------------------
     df["Issued_bool"] = df["Issued By EPC"].notna().astype(int)
     df["Review_bool"] = df["Review By OE"].notna().astype(int)
@@ -532,7 +661,7 @@ def main():
     st.pyplot(fig4)
 
     # --------------------------
-    # 11) DELAY BY DISCIPLINE (AS OF TODAY)
+    # 12) DELAY BY DISCIPLINE (AS OF TODAY)
     # --------------------------
     st.subheader("Delay Percentage by Discipline (As of Today)")
 
@@ -584,7 +713,7 @@ def main():
     st.dataframe(disc_delay)
 
     # --------------------------
-    # 12) FINAL MILESTONE + STATUS STACKED BAR
+    # 13) FINAL MILESTONE + STATUS STACKED BAR
     # --------------------------
     def get_final_milestone(row):
         if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
@@ -622,13 +751,13 @@ def main():
     ax_status.set_title("Documents by Final Milestone (Stacked by Status)", fontsize=10)
     ax_status.set_xlabel("Final Milestone", fontsize=9)
     ax_status.set_ylabel("Number of Documents", fontsize=9)
+    ax_status.set xticks(rotation=45, ha='right', fontsize=8)
     ax_status.legend(title="Status", fontsize=8)
-    plt.xticks(rotation=45, ha='right', fontsize=8)
     plt.tight_layout()
     st.pyplot(fig_status)
 
     # --------------------------
-    # 13) SAVE UPDATED CSV
+    # 14) SAVE UPDATED CSV
     # --------------------------
     df["Issuance Expected"] = pd.to_datetime(df["Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
     df["Expected Review"] = pd.to_datetime(df["Expected Review"], errors="coerce").dt.strftime("%d-%b-%y")

@@ -551,10 +551,24 @@ def main():
         # Create figure with adjusted size
         fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(10, 10))
 
-        # Outer pie (Discipline)
+        # Outer pie (Discipline) - Use selected color scheme
         outer_labels = disc_counts.index
         outer_sizes = disc_counts.values
-        outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff", "#0059b3"]
+        n_disciplines = len(outer_labels)
+
+        # Define outer colors based on color_scheme
+        if color_scheme == "Standard":
+            outer_colors = [c['color'] for c in plt.rcParamsDefault['axes.prop_cycle']][:n_disciplines]
+        elif color_scheme == "Shades of Blue":
+            outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff"][:n_disciplines]
+            if n_disciplines > 5:
+                outer_colors = sns.color_palette("Blues", n_colors=n_disciplines)
+        elif color_scheme == "Shades of Green":
+            outer_colors = ["#ccffcc", "#99ff99", "#66ff66", "#33cc33", "#009900"][:n_disciplines]
+            if n_disciplines > 5:
+                outer_colors = sns.color_palette("Greens", n_colors=n_disciplines)
+        else:  # Seaborn Palette
+            outer_colors = sns.color_palette(seaborn_palette, n_colors=n_disciplines)
 
         # Inner pie (One wedge per document)
         inner_sizes = []
@@ -611,7 +625,7 @@ def main():
                     va='center',
                     fontsize=10,
                     fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.7)
+                    bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8)
                 )
 
             # Plot inner pie (one wedge per document, no text)

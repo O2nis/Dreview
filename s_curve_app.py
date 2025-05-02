@@ -500,7 +500,7 @@ def main():
         fig_ifr, ax_ifr = plt.subplots(figsize=(4,4))
         ax_ifr.pie(
             ifr_values,
-            labels=["Issued12 by EPC", "Not Yet Issued"],
+            labels=["Issued by EPC", "Not Yet Issued"],
             autopct=ifr_autopct,
             startangle=140,
             wedgeprops={"width":0.4}
@@ -532,6 +532,11 @@ def main():
         status_order = ["Incomplete", "Completed"]
         disc_status_counts = disc_status_counts.reindex(columns=status_order, fill_value=0)
 
+        # Debug output
+        st.write("**Debug Info (Discipline):**")
+        st.write("Discipline Counts:", disc_counts.to_dict())
+        st.write("Status Counts:\n", disc_status_counts)
+
         # Create two columns for side-by-side nested pie charts
         col1, col2 = st.columns(2)
 
@@ -556,46 +561,56 @@ def main():
                     inner_sizes.append(count)
                     inner_colors.append(status_colors[status_order.index(status)])
 
-            # Plot outer pie with bold numbers
-            wedges_outer, texts_outer, autotexts_outer = ax_nested_disc.pie(
-                outer_sizes,
-                autopct="%1.0f",
-                startangle=90,
-                radius=1.0,
-                wedgeprops=dict(width=0.3, edgecolor='w'),
-                colors=outer_colors,
-                textprops={'fontsize': 10, 'fontweight': 'bold'}
-            )
+            # Validate inner_sizes
+            st.write("Inner Sizes (Discipline):", inner_sizes)
+            if not inner_sizes or sum(inner_sizes) == 0:
+                st.warning("No valid data for inner pie chart (Discipline). All counts are zero or empty.")
+            else:
+                # Plot outer pie with bold numbers
+                wedges_outer, texts_outer, autotexts_outer = ax_nested_disc.pie(
+                    outer_sizes,
+                    autopct="%1.0f",
+                    startangle=90,
+                    radius=1.0,
+                    wedgeprops=dict(width=0.3, edgecolor='w'),
+                    colors=outer_colors,
+                    textprops={'fontsize': 10, 'fontweight': 'bold'}
+                )
 
-            # Plot inner pie without numbers
-            wedges_inner, texts_inner, autotexts_inner = ax_nested_disc.pie(
-                inner_sizes,
-                startangle=90,
-                radius=0.7,
-                wedgeprops=dict(width=0.3, edgecolor='w'),
-                colors=inner_colors
-            )
+                # Plot inner pie without numbers
+                try:
+                    wedges_inner, texts_inner, autotexts_inner = ax_nested_disc.pie(
+                        inner_sizes,
+                        startangle=90,
+                        radius=0.7,
+                        wedgeprops=dict(width=0.3, edgecolor='w'),
+                        colors=inner_colors
+                    )
+                except ValueError as e:
+                    st.error(f"Error plotting inner pie chart (Discipline): {str(e)}")
+                    plt.close(fig_nested_disc)
+                    st.stop()
 
-            # Create legends
-            outer_legend = ax_nested_disc.legend(
-                wedges_outer, outer_labels,
-                title="Disciplines",
-                loc="center left",
-                bbox_to_anchor=(1, 0.5),
-                fontsize=8
-            )
-            ax_nested_disc.add_artist(outer_legend)
-            ax_nested_disc.legend(
-                wedges_inner[:len(status_order)], status_order,
-                title="Status",
-                loc="center left",
-                bbox_to_anchor=(1, 0.2),
-                fontsize=8
-            )
+                # Create legends
+                outer_legend = ax_nested_disc.legend(
+                    wedges_outer, outer_labels,
+                    title="Disciplines",
+                    loc="center left",
+                    bbox_to_anchor=(1, 0.5),
+                    fontsize=8
+                )
+                ax_nested_disc.add_artist(outer_legend)
+                ax_nested_disc.legend(
+                    wedges_inner[:len(status_order)], status_order,
+                    title="Status",
+                    loc="center left",
+                    bbox_to_anchor=(1, 0.2),
+                    fontsize=8
+                )
 
-            ax_nested_disc.set_title("Documents by Discipline and Completion", fontsize=10)
-            plt.tight_layout()
-            st.pyplot(fig_nested_disc)
+                ax_nested_disc.set_title("Documents by Discipline and Completion", fontsize=10)
+                plt.tight_layout()
+                st.pyplot(fig_nested_disc)
 
     # Prepare data for Area nested pie chart
     area_counts = df.groupby("Area").size()
@@ -604,6 +619,11 @@ def main():
     else:
         area_status_counts = df.groupby(["Area", "Doc_Status"]).size().unstack(fill_value=0)
         area_status_counts = area_status_counts.reindex(columns=status_order, fill_value=0)
+
+        # Debug output
+        st.write("**Debug Info (Area):**")
+        st.write("Area Counts:", area_counts.to_dict())
+        st.write("Status Counts:\n", area_status_counts)
 
         with col2:
             st.write("**Document Completion by Area**")
@@ -626,46 +646,56 @@ def main():
                     inner_sizes.append(count)
                     inner_colors.append(status_colors[status_order.index(status)])
 
-            # Plot outer pie with bold numbers
-            wedges_outer, texts_outer, autotexts_outer = ax_nested_area.pie(
-                outer_sizes,
-                autopct="%1.0f",
-                startangle=90,
-                radius=1.0,
-                wedgeprops=dict(width=0.3, edgecolor='w'),
-                colors=outer_colors,
-                textprops={'fontsize': 10, 'fontweight': 'bold'}
-            )
+            # Validate inner_sizes
+            st.write("Inner Sizes (Area):", inner_sizes)
+            if not inner_sizes or sum(inner_sizes) == 0:
+                st.warning("No valid data for inner pie chart (Area). All counts are zero or empty.")
+            else:
+                # Plot outer pie with bold numbers
+                wedges_outer, texts_outer, autotexts_outer = ax_nested_area.pie(
+                    outer_sizes,
+                    autopct="%1.0f",
+                    startangle=90,
+                    radius=1.0,
+                    wedgeprops=dict(width=0.3, edgecolor='w'),
+                    colors=outer_colors,
+                    textprops={'fontsize': 10, 'fontweight': 'bold'}
+                )
 
-            # Plot inner pie without numbers
-            wedges_inner, texts_inner, autotexts_inner = ax_nested_area.pie(
-                inner_sizes,
-                startangle=90,
-                radius=0.7,
-                wedgeprops=dict(width=0.3, edgecolor='w'),
-                colors=inner_colors
-            )
+                # Plot inner pie without numbers
+                try:
+                    wedges_inner, texts_inner, autotexts_inner = ax_nested_area.pie(
+                        inner_sizes,
+                        startangle=90,
+                        radius=0.7,
+                        wedgeprops=dict(width=0.3, edgecolor='w'),
+                        colors=inner_colors
+                    )
+                except ValueError as e:
+                    st.error(f"Error plotting inner pie chart (Area): {str(e)}")
+                    plt.close(fig_nested_area)
+                    st.stop()
 
-            # Create legends
-            outer_legend = ax_nested_area.legend(
-                wedges_outer, outer_labels,
-                title="Areas",
-                loc="center left",
-                bbox_to_anchor=(1, 0.5),
-                fontsize=8
-            )
-            ax_nested_area.add_artist(outer_legend)
-            ax_nested_area.legend(
-                wedges_inner[:len(status_order)], status_order,
-                title="Status",
-                loc="center left",
-                bbox_to_anchor=(1, 0.2),
-                fontsize=8
-            )
+                # Create legends
+                outer_legend = ax_nested_area.legend(
+                    wedges_outer, outer_labels,
+                    title="Areas",
+                    loc="center left",
+                    bbox_to_anchor=(1, 0.5),
+                    fontsize=8
+                )
+                ax_nested_area.add_artist(outer_legend)
+                ax_nested_area.legend(
+                    wedges_inner[:len(status_order)], status_order,
+                    title="Status",
+                    loc="center left",
+                    bbox_to_anchor=(1, 0.2),
+                    fontsize=8
+                )
 
-            ax_nested_area.set_title("Documents by Area and Completion", fontsize=10)
-            plt.tight_layout()
-            st.pyplot(fig_nested_area)
+                ax_nested_area.set_title("Documents by Area and Completion", fontsize=10)
+                plt.tight_layout()
+                st.pyplot(fig_nested_area)
 
     # --------------------------
     # 11) STACKED BAR IFR/IFA/IFT BY DISCIPLINE

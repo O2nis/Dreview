@@ -69,8 +69,13 @@ def main():
         ["paper", "notebook", "talk", "poster"],
         index=1
     )
+    color_scheme = st.sidebar.selectbox(
+        "Color Scheme (Bar/Donut/Pie Charts)",
+        ["Standard", "Shades of Blue", "Shades of Green", "Seaborn Palette"],
+        index=1
+    )
     seaborn_palette = st.sidebar.selectbox(
-        "Seaborn Palette (Bar/Donut/Pie Charts)",
+        "Seaborn Palette (if Seaborn Palette selected)",
         ["deep", "muted", "bright", "pastel", "dark", "colorblind", "Set1", "Set2", "Set3"],
         index=0
     )
@@ -397,10 +402,20 @@ def main():
     # --------------------------
     # 7) COLOR SCHEME FOR OTHER CHARTS
     # --------------------------
-    # Use Seaborn palette for bar/donut/pie charts
-    palette_colors = sns.color_palette(seaborn_palette, n_colors=10)
-    palette_cycler = cycler(color=palette_colors)
-    plt.rc("axes", prop_cycle=palette_cycler)
+    standard_cycler = plt.rcParamsDefault['axes.prop_cycle']
+    blue_cycler = cycler(color=["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff"])
+    green_cycler = cycler(color=["#ccffcc", "#99ff99", "#66ff66", "#33cc33", "#009900"])
+    
+    if color_scheme == "Standard":
+        plt.rc("axes", prop_cycle=standard_cycler)
+    elif color_scheme == "Shades of Blue":
+        plt.rc("axes", prop_cycle=blue_cycler)
+    elif color_scheme == "Shades of Green":
+        plt.rc("axes", prop_cycle=green_cycler)
+    else:  # Seaborn Palette
+        palette_colors = sns.color_palette(seaborn_palette, n_colors=10)
+        palette_cycler = cycler(color=palette_colors)
+        plt.rc("axes", prop_cycle=palette_cycler)
 
     # --------------------------
     # 8) ACTUAL vs EXPECTED HOURS BY DISCIPLINE

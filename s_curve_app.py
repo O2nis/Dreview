@@ -54,6 +54,9 @@ def main():
     IFA_DELTA_DAYS = st.sidebar.number_input("Days to add for Expected Review", value=10, step=1)
     IFT_DELTA_DAYS = st.sidebar.number_input("Days to add for Final Issuance Expected", value=5, step=1)
 
+    # Add input for status to ignore
+    IGNORE_STATUS = st.sidebar.text_input("Status to Ignore (case-sensitive, leave blank to include all)", value="")
+
     # Add toggle for percentage view
     PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
 
@@ -130,6 +133,17 @@ def main():
         "CS rev",
         "Flag"
     ]
+
+    # Filter out rows with the specified status
+    if IGNORE_STATUS.strip():
+        initial_len = len(df)
+        df = df[df["Status"] != IGNORE_STATUS]
+        filtered_len = len(df)
+        if filtered_len < initial_len:
+            st.info(f"Filtered out {initial_len - filtered_len} rows with Status '{IGNORE_STATUS}'")
+        if filtered_len == 0:
+            st.error(f"All rows have Status '{IGNORE_STATUS}'. No data remains after filtering.")
+            return
 
     df["Issued by EPC"] = df["Issued by EPC"].apply(parse_date)
     df["Review By OE"] = df["Review By OE"].apply(parse_date)
@@ -704,7 +718,7 @@ def main():
         e_val = 0.0
         if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= today_date:
             e_val += IFR_WEIGHT
-        if pd.notna(row["Expected review"]) and row["Expected review"] <= today_date:
+        if pd.notna(row["Expected review"]) and row["Expected review"] != today_date:
             e_val += IFA_WEIGHT
         if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= today_date:
             e_val += IFT_WEIGHT

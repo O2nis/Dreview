@@ -10,15 +10,32 @@ from cycler import cycler
 plt.rcParams.update({'font.size': 8})
 
 def parse_date(d):
-    if not isinstance(d, str):
+    if pd.isna(d) or d in ['', '0-Jan-00', '########']:
         return pd.NaT
-    d = d.strip()
-    if d in ['0-Jan-00','########','']:
-        return pd.NaT
-    try:
-        return pd.to_datetime(d, format='%d-%b-%y', errors='coerce')
-    except:
-        return pd.NaT
+    if isinstance(d, (dt.datetime, pd.Timestamp)):
+        return pd.to_datetime(d)
+    if isinstance(d, (int, float)):  # Handle Excel numeric dates
+        try:
+            return pd.to_datetime('1899-12-30') + pd.to_timedelta(d, unit='D')
+        except:
+            return pd.NaT
+    if isinstance(d, str):
+        d = d.strip()
+        # Try multiple date formats
+        date_formats = [
+            '%d-%b-%y',        # e.g., 04-Apr-25
+            '%d-%b-%Y',        # e.g., 04-Apr-2025
+            '%Y-%m-%d',        # e.g., 2025-04-04
+            '%m/%d/%Y',        # e.g., 04/04/2025
+            '%d/%m/%Y',        # e.g., 04/04/2025
+            '%Y/%m/%d'         # e.g., 2025/04/04
+        ]
+        for fmt in date_formats:
+            try:
+                return pd.to_datetime(d, format=fmt, errors='coerce')
+            except:
+                continue
+    return pd.NaT
 
 def main():
     st.set_page_config(page_title="S-Curve Analysis", layout="wide")
@@ -44,13 +61,12 @@ def main():
     # 1) SIDEBAR INPUTS
     # --------------------------
     st.sidebar.header("Configuration")
-    CSV_INPUT_PATH = st.sidebar.file_uploader("Upload Input CSV", type=["csv"])
+    CSV_INPUT_PATH = st.sidebar.file_uploader("Upload Input File", type=["csv", "xlsx", "xls"])
     INITIAL_DATE = st.sidebar.date_input("Initial Date for Expected Calculations", value=pd.to_datetime("2024-08-01"))
     IFR_WEIGHT = st.sidebar.number_input("Issued By EPC Weight", value=0.40, step=0.05)
     IFA_WEIGHT = st.sidebar.number_input("Review By OE Weight", value=0.30, step=0.05)
     IFT_WEIGHT = st.sidebar.number_input("Reply By EPC Weight", value=0.30, step=0.05)
     RECOVERY_FACTOR = st.sidebar.number_input("Recovery Factor", value=0.75, step=0.05)
-
     IFA_DELTA_DAYS = st.sidebar.number_input("Days to add for Expected Review", value=10, step=1)
     IFT_DELTA_DAYS = st.sidebar.number_input("Days to add for Final Issuance Expected", value=5, step=1)
 
@@ -97,13 +113,18 @@ def main():
     end_date_color = st.sidebar.color_picker("End Date Line Color", "#d62728")
 
     if CSV_INPUT_PATH is None:
-        st.warning("Please upload your input CSV file or download the template above.")
+        st.warning("Please upload your input CSV or Excel file or download the template above.")
         return
 
     # --------------------------
-    # 2) LOAD CSV & PREP DATA
+    # 2) LOAD CSV OR EXCEL & PREP DATA
     # --------------------------
-    df = pd.read_csv(CSV_INPUT_PATH)
+    file_extension = CSV_INPUT_PATH.name.split('.')[-1].lower()
+    if file_extension in ['xlsx', 'xls']:
+        df = pd.read_excel(CSV_INPUT_PATH)
+    else:
+        df = pd.read_csv(CSV_INPUT_PATH)
+
     df.columns = [
         "ID",
         "Discipline",
@@ -718,7 +739,7 @@ def main():
         e_val = 0.0
         if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= today_date:
             e_val += IFR_WEIGHT
-        if pd.notna(row["Expected review"]) and row["Expected review"] != today_date:
+        if pd.notna(row["Expected review"]) and row["Expected review"] <= today_date:
             e_val += IFA_WEIGHT
         if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= today_date:
             e_val += IFT_WEIGHT

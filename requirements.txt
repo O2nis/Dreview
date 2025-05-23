@@ -7,3 +7,4 @@ chardet
 openpyxl
 seaborn
 chrono
+python-pptx

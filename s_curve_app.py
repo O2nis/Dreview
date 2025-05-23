@@ -6,6 +6,11 @@ import datetime as dt
 import numpy as np
 import seaborn as sns
 from cycler import cycler
+from io import BytesIO
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.text import PP_ALIGN
+import matplotlib
 
 plt.rcParams.update({'font.size': 8})
 
@@ -21,14 +26,8 @@ def parse_date(d):
             return pd.NaT
     if isinstance(d, str):
         d = d.strip()
-        # Try multiple date formats
         date_formats = [
-            '%d-%b-%y',        # e.g., 04-Apr-25
-            '%d-%b-%Y',        # e.g., 04-Apr-2025
-            '%Y-%m-%d',        # e.g., 2025-04-04
-            '%m/%d/%Y',        # e.g., 04/04/2025
-            '%d/%m/%Y',        # e.g., 04/04/2025
-            '%Y/%m/%d'         # e.g., 2025/04/04
+            '%d-%b-%y', '%d-%b-%Y', '%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y/%m/%d'
         ]
         for fmt in date_formats:
             try:
@@ -37,11 +36,72 @@ def parse_date(d):
                 continue
     return pd.NaT
 
+def save_plot_to_bytes(fig):
+    """Save a matplotlib figure to a BytesIO object."""
+    buf = BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight', dpi=200)
+    buf.seek(0)
+    return buf
+
+def create_pptx_report(charts_data, output_filename="S-Curve_Analysis_Report.pptx"):
+    """Create a PowerPoint presentation with one slide per chart."""
+    prs = Presentation()
+    
+    # Title Slide
+    slide_layout = prs.slide_layouts[0]  # Title Slide
+    slide = prs.slides.add_slide(slide_layout)
+    title = slide.shapes.title
+    subtitle = slide.placeholders[1]
+    title.text = "S-Curve Analysis Report"
+    subtitle.text = f"Generated on {dt.datetime.now().strftime('%d-%b-%Y')}"
+    
+    # Add slides for each chart
+    slide_layout = prs.slide_layouts[5]  # Blank layout
+    
+    for chart_title, chart_buf, description in charts_data:
+        slide = prs.slides.add_slide(slide_layout)
+        
+        # Add title
+        title_shape = slide.shapes.add_textbox(
+            Inches(0.5), Inches(0.2), Inches(9), Inches(0.5)
+        )
+        title_frame = title_shape.text_frame
+        title_frame.text = chart_title
+        title_p = title_frame.paragraphs[0]
+        title_p.font.size = Pt(24)
+        title_p.font.bold = True
+        title_p.alignment = PP_ALIGN.CENTER
+        
+        # Add chart image
+        slide.shapes.add_picture(
+            chart_buf, Inches(0.5), Inches(0.8), width=Inches(9)
+        )
+        
+        # Add description
+        text_box = slide.shapes.add_textbox(
+            Inches(0.5), Inches(5.3), Inches(9), Inches(1.5)
+        )
+        text_frame = text_box.text_frame
+        text_frame.word_wrap = True
+        p = text_frame.add_paragraph()
+        p.text = description
+        p.font.size = Pt(14)
+        p.alignment = PP_ALIGN.LEFT
+    
+    # Save presentation to BytesIO
+    output = BytesIO()
+    prs.save(output)
+    output.seek(0)
+    return output
+
 def main():
     st.set_page_config(page_title="S-Curve Analysis", layout="wide")
 
+    # Initialize list to store chart data for PPTX
+    charts_data = []
+
     # ----------------------------------------------------------------
-    # A) TEMPLATE CSV DOWNLOAD (with first 3 rows + headers)
+    # A) TEMPLATE CSV DOWNLOAD
     # ----------------------------------------------------------------
     TEMPLATE_CONTENT = """ID,Discipline,Area,Document Title,Project Indentifer,Originator,Document Number,Document Type ,Counter ,Revision,Area code,Disc,Category,Transmittal Code,Comment Sheet OE,Comment Sheet EPC,Schedule [Days],Issued by EPC,Issuance Expected,Review By OE,Expected review,Reply By EPC,Final Issuance Expected,Man Hours ,Status,CS rev,Flag
 1,General,General,Overall site layout,KFE,SC,0001,MA,00,A,GEN,GN,DRG,"KFE-SC-MOEM-T-0052-AO-PV System Analysis Report, Project Quality Management Plan and TCO.",MOEM-TCO-CI-0017-Rev_00_FI,MOEM-TCO-CI-0017-Rev_00_CE,10,4-Apr-25,,4-Apr-25, , , ,10,CO,1,0
@@ -69,11 +129,7 @@ def main():
     RECOVERY_FACTOR = st.sidebar.number_input("Recovery Factor", value=0.75, step=0.05)
     IFA_DELTA_DAYS = st.sidebar.number_input("Days to add for Expected Review", value=10, step=1)
     IFT_DELTA_DAYS = st.sidebar.number_input("Days to add for Final Issuance Expected", value=5, step=1)
-
-    # Add input for status to ignore
     IGNORE_STATUS = st.sidebar.text_input("Status to Ignore (case-sensitive, leave blank to include all)", value="")
-
-    # Add toggle for percentage view
     PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
 
     st.sidebar.markdown("---")
@@ -101,7 +157,6 @@ def main():
     font_scale = st.sidebar.slider("Font Scale", min_value=0.5, max_value=2.0, value=1.0, step=0.1)
     show_grid = st.sidebar.checkbox("Show Grid Lines", value=True)
 
-    # Apply Seaborn settings
     sns.set_style(seaborn_style)
     sns.set_context(seaborn_context, font_scale=font_scale)
 
@@ -126,36 +181,14 @@ def main():
         df = pd.read_csv(CSV_INPUT_PATH)
 
     df.columns = [
-        "ID",
-        "Discipline",
-        "Area",
-        "Document Title",
-        "Project Indentifer",
-        "Originator",
-        "Document Number",
-        "Document Type ",
-        "Counter ",
-        "Revision",
-        "Area code",
-        "Disc",
-        "Category",
-        "Transmittal Code",
-        "Comment Sheet OE",
-        "Comment Sheet EPC",
-        "Schedule [Days]",
-        "Issued by EPC",
-        "Issuance Expected",
-        "Review By OE",
-        "Expected review",
-        "Reply By EPC",
-        "Final Issuance Expected",
-        "Man Hours ",
-        "Status",
-        "CS rev",
-        "Flag"
+        "ID", "Discipline", "Area", "Document Title", "Project Indentifer", "Originator",
+        "Document Number", "Document Type ", "Counter ", "Revision", "Area code", "Disc",
+        "Category", "Transmittal Code", "Comment Sheet OE", "Comment Sheet EPC",
+        "Schedule [Days]", "Issued by EPC", "Issuance Expected", "Review By OE",
+        "Expected review", "Reply By EPC", "Final Issuance Expected", "Man Hours ",
+        "Status", "CS rev", "Flag"
     ]
 
-    # Filter out rows with the specified status
     if IGNORE_STATUS.strip():
         initial_len = len(df)
         df = df[df["Status"] != IGNORE_STATUS]
@@ -169,7 +202,6 @@ def main():
     df["Issued by EPC"] = df["Issued by EPC"].apply(parse_date)
     df["Review By OE"] = df["Review By OE"].apply(parse_date)
     df["Reply By EPC"] = df["Reply By EPC"].apply(parse_date)
-
     df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
     df["Man Hours "] = pd.to_numeric(df["Man Hours "], errors="coerce").fillna(0)
     df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
@@ -202,16 +234,12 @@ def main():
     # --------------------------
     # 3) BUILD TIMELINES
     # --------------------------
-    # Actual timeline: from start_date to today_date
     actual_timeline = pd.date_range(start=start_date, end=today_date, freq='W')
-
-    # Expected timeline: from start_date to ift_expected_max
     expected_timeline = pd.date_range(start=start_date, end=ift_expected_max, freq='W')
 
     # --------------------------
     # 4) BUILD ACTUAL AND EXPECTED CUMULATIVE VALUES
     # --------------------------
-    # For Actual Progress
     actual_cum = []
     last_actual_value = 0.0
     last_progress_date = start_date
@@ -239,12 +267,10 @@ def main():
         else:
             actual_cum.append(last_actual_value)
     
-    # Extend actual curve horizontally to today if no progress since last_progress_date
     if last_progress_date < today_date:
         actual_timeline = list(actual_timeline) + [today_date]
         actual_cum = actual_cum + [last_actual_value]
 
-    # For Expected Progress
     expected_cum = []
     last_expected_value = 0.0
     last_expected_progress_date = start_date
@@ -272,7 +298,6 @@ def main():
         else:
             expected_cum.append(last_expected_value)
     
-    # Extend expected curve horizontally to end date if no progress since last_expected_progress_date
     if pd.notna(ift_expected_max) and last_expected_progress_date < ift_expected_max:
         expected_timeline = list(expected_timeline) + [ift_expected_max]
         expected_cum = expected_cum + [last_expected_value]
@@ -281,7 +306,7 @@ def main():
     final_expected = expected_cum[-1]
 
     # --------------------------
-    # 5) PROJECTED RECOVERY LINE (FROM TODAY'S ACTUAL)
+    # 5) PROJECTED RECOVERY LINE
     # --------------------------
     if today_date <= actual_timeline[0]:
         today_idx = 0
@@ -335,7 +360,6 @@ def main():
     # --------------------------
     st.subheader("S-Curve with Delay Recovery")
 
-    # Adjust y-axis values if percentage view is selected
     y_actual = [x/total_mh*100 for x in actual_cum] if PERCENTAGE_VIEW else actual_cum
     y_expected = [x/total_mh*100 for x in expected_cum] if PERCENTAGE_VIEW else expected_cum
     y_projected = [x/total_mh*100 for x in projected_cumulative] if PERCENTAGE_VIEW and projected_cumulative else projected_cumulative
@@ -345,7 +369,6 @@ def main():
     ax.plot(actual_timeline, y_actual, label="Actual Progress", color=actual_color, linewidth=2)
     ax.plot(expected_timeline, y_expected, label="Expected Progress", color=expected_color, linewidth=2)
 
-    # Add horizontal extensions
     if last_progress_date < today_date:
         ax.hlines(y=y_actual[-1], xmin=last_progress_date, xmax=today_date, 
                  color=actual_color, linestyle='-', linewidth=2)
@@ -374,7 +397,6 @@ def main():
     plt.xticks(rotation=45)
     plt.tight_layout()
 
-    # Add vertical lines and annotations
     ax.axvline(today_date, color=today_color, linestyle="--", linewidth=1.5, label="Today")
     ax.annotate(
         f"Today\n{today_date.strftime('%d-%b-%Y')}",
@@ -412,13 +434,9 @@ def main():
             arrowprops=dict(arrowstyle="->", color=end_date_color)
         )
 
-    # Add delay annotation
     delay_today = expected_today - actual_today
     delay_pct = delay_today/final_expected*100 if final_expected > 0 else 0
-    if PERCENTAGE_VIEW:
-        delay_text = f"Current Delay: {delay_pct:.1f}%"
-    else:
-        delay_text = f"Current Delay: {delay_today:,.1f} MH\n({delay_pct:.1f}%)"
+    delay_text = f"Current Delay: {delay_pct:.1f}%" if PERCENTAGE_VIEW else f"Current Delay: {delay_today:,.1f} MH\n({delay_pct:.1f}%)"
     
     ax.annotate(
         delay_text,
@@ -433,6 +451,11 @@ def main():
     )
 
     st.pyplot(fig)
+    charts_data.append((
+        "S-Curve with Delay Recovery",
+        save_plot_to_bytes(fig),
+        "This S-Curve illustrates the project's actual progress against the expected progress over time, measured in cumulative man-hours or percentage. The actual progress (blue) is compared to the planned schedule (orange), with a projected recovery line (green, dotted) indicating the anticipated path to close the gap by the recovery end date. Vertical lines mark today's date and the original and recovery end dates, with the current delay highlighted."
+    ))
 
     # --------------------------
     # 7) COLOR SCHEME FOR OTHER CHARTS
@@ -447,10 +470,9 @@ def main():
         plt.rc("axes", prop_cycle=blue_cycler)
     elif color_scheme == "Shades of Green":
         plt.rc("axes", prop_cycle=green_cycler)
-    else:  # Seaborn Palette
+    else:
         palette_colors = sns.color_palette(seaborn_palette, n_colors=10)
-        palette_cycler = cycler(color=palette_colors)
-        plt.rc("axes", prop_cycle=palette_cycler)
+        plt.rc("axes", prop_cycle=cycler(color=palette_colors))
 
     # --------------------------
     # 8) ACTUAL vs EXPECTED HOURS BY DISCIPLINE
@@ -483,7 +505,6 @@ def main():
 
     by_disc = df.groupby("Discipline")[["Actual_Progress_At_Final","Expected_Progress_At_Final"]].sum()
     
-    # Convert to percentage if selected
     if PERCENTAGE_VIEW:
         by_disc["Actual_Progress_At_Final"] = by_disc["Actual_Progress_At_Final"] / total_mh * 100
         by_disc["Expected_Progress_At_Final"] = by_disc["Expected_Progress_At_Final"] / total_mh * 100
@@ -519,6 +540,11 @@ def main():
         ax2.grid(True)
     plt.tight_layout()
     st.pyplot(fig2)
+    charts_data.append((
+        "Actual vs. Expected Hours by Discipline",
+        save_plot_to_bytes(fig2),
+        "This bar chart compares the actual and expected cumulative man-hours (or percentage) across different disciplines as of the project end date. It highlights disparities between planned and achieved progress, identifying disciplines that are on track or lagging."
+    ))
 
     # --------------------------
     # 9) TWO DONUT CHARTS SIDE BY SIDE
@@ -545,6 +571,11 @@ def main():
         )
         ax3.set_title("Project Completion", fontsize=9)
         st.pyplot(fig3)
+        charts_data.append((
+            "Total Project Completion",
+            save_plot_to_bytes(fig3),
+            "This donut chart displays the overall project completion percentage, showing the proportion of man-hours completed versus remaining, providing a high-level view of project progress."
+        ))
 
     with col2:
         st.write("**Issued By EPC Status**")
@@ -563,13 +594,17 @@ def main():
         )
         ax_ifr.set_title("Issued By EPC Status", fontsize=9)
         st.pyplot(fig_ifr)
+        charts_data.append((
+            "Issued By EPC Status",
+            save_plot_to_bytes(fig_ifr),
+            "This donut chart illustrates the status of document issuance by EPC, indicating the number of documents issued versus those still pending, reflecting the initial milestone progress."
+        ))
 
     # --------------------------
     # 10) NESTED PIE CHART FOR DISCIPLINE
     # --------------------------
     st.subheader("Nested Pie Chart: Document Completion by Discipline")
 
-    # Helper function to determine document status
     def get_doc_status(row):
         if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
             return "Completed"
@@ -578,20 +613,16 @@ def main():
 
     df["Doc_Status"] = df.apply(get_doc_status, axis=1)
 
-    # Prepare data for Discipline nested pie chart
     disc_counts = df.groupby("Discipline").size()
     if disc_counts.empty:
         st.warning("No Discipline data available for pie chart.")
     else:
-        # Create figure with adjusted size
         fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(10, 10))
 
-        # Outer pie (Discipline) - Use selected color scheme
         outer_labels = disc_counts.index
         outer_sizes = disc_counts.values
         n_disciplines = len(outer_labels)
 
-        # Define outer colors based on color_scheme
         if color_scheme == "Standard":
             outer_colors = [c['color'] for c in plt.rcParamsDefault['axes.prop_cycle']][:n_disciplines]
         elif color_scheme == "Shades of Blue":
@@ -602,26 +633,22 @@ def main():
             outer_colors = ["#ccffcc", "#99ff99", "#66ff66", "#33cc33", "#009900"][:n_disciplines]
             if n_disciplines > 5:
                 outer_colors = sns.color_palette("Greens", n_colors=n_disciplines)
-        else:  # Seaborn Palette
+        else:
             outer_colors = sns.color_palette(seaborn_palette, n_colors=n_disciplines)
 
-        # Inner pie (One wedge per document)
         inner_sizes = []
         inner_colors = []
         status_colors = {"Completed": "#808080", "Incomplete": "#F0F0F0"}
 
-        # Collect inner sizes (1 per document) and colors
         for disc in disc_counts.index:
             disc_docs = df[df["Discipline"] == disc]
             for _, row in disc_docs.iterrows():
                 inner_sizes.append(1)
                 inner_colors.append(status_colors[row["Doc_Status"]])
 
-        # Validate inner_sizes
         if not inner_sizes or sum(inner_sizes) == 0:
             st.warning("No valid data for inner pie chart (Discipline). All counts are zero or empty.")
         else:
-            # Plot outer pie (Discipline)
             outer_wedges, outer_texts = ax_nested_disc.pie(
                 outer_sizes,
                 radius=1.0,
@@ -631,14 +658,11 @@ def main():
                 colors=outer_colors
             )
 
-            # Add discipline names and counts as annotations
             for i, (wedge, label, count) in enumerate(zip(outer_wedges, outer_labels, outer_sizes)):
                 angle = (wedge.theta2 - wedge.theta1)/2. + wedge.theta1
                 x = 1.1 * np.cos(np.deg2rad(angle))
                 y = 1.1 * np.sin(np.deg2rad(angle))
                 horizontalalignment = {-1: "right", 1: "left"}.get(np.sign(x), "center")
-
-                # Add discipline name (regular font)
                 ax_nested_disc.annotate(
                     label,
                     xy=(x, y),
@@ -649,8 +673,6 @@ def main():
                     fontsize=8,
                     fontweight='normal'
                 )
-
-                # Add count below (bold, in a box)
                 ax_nested_disc.annotate(
                     f"({count})",
                     xy=(x, y),
@@ -663,7 +685,6 @@ def main():
                     bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8)
                 )
 
-            # Plot inner pie (one wedge per document, no text)
             try:
                 inner_wedges = ax_nested_disc.pie(
                     inner_sizes,
@@ -677,7 +698,6 @@ def main():
                 plt.close(fig_nested_disc)
                 st.stop()
 
-            # Create status legend using dummy patches
             from matplotlib.patches import Patch
             status_patches = [
                 Patch(color=status_colors["Completed"], label="Completed"),
@@ -694,6 +714,11 @@ def main():
             ax_nested_disc.set_title("Documents by Discipline and Completion", fontsize=10)
             plt.tight_layout()
             st.pyplot(fig_nested_disc)
+            charts_data.append((
+                "Documents by Discipline and Completion",
+                save_plot_to_bytes(fig_nested_disc),
+                "This nested pie chart shows the distribution of documents by discipline (outer ring) and their completion status (inner ring). Each outer segment represents a discipline with its document count, while the inner segments indicate whether each document is completed or incomplete."
+            ))
 
     # --------------------------
     # 11) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
@@ -718,9 +743,14 @@ def main():
     for container in ax4.containers:
         ax4.bar_label(container, label_type='center', fontsize=8)
     st.pyplot(fig4)
+    charts_data.append((
+        "Document Milestone Status by Discipline",
+        save_plot_to_bytes(fig4),
+        "This stacked bar chart displays the number of documents per discipline that have reached the milestones of Issued by EPC, Review by OE, and Reply by EPC. It provides a clear view of milestone progress across disciplines."
+    ))
 
     # --------------------------
-    # 12) DELAY BY DISCIPLINE (AS OF TODAY)
+    # 12) DELAY BY DISCIPLINE
     # --------------------------
     st.subheader("Delay Percentage by Discipline (As of Today)")
 
@@ -768,6 +798,11 @@ def main():
         ax_delay.grid(True)
     plt.tight_layout()
     st.pyplot(fig_delay)
+    charts_data.append((
+        "Delay in % by Discipline (Today)",
+        save_plot_to_bytes(fig_delay),
+        "This bar chart shows the delay percentage by discipline as of today, calculated as the difference between expected and actual progress relative to expected progress. It highlights disciplines with significant delays."
+    ))
 
     st.write("Detailed Delay Data:")
     st.dataframe(disc_delay)
@@ -818,6 +853,11 @@ def main():
         ax_status.grid(True)
     plt.tight_layout()
     st.pyplot(fig_status)
+    charts_data.append((
+        "Documents by Final Milestone (Stacked by Status)",
+        save_plot_to_bytes(fig_status),
+        "This stacked bar chart categorizes documents by their final milestone (Issued by EPC, Review by OE, Reply by EPC) and stacks them by status, showing the distribution of document progress and status."
+    ))
 
     # --------------------------
     # 14) SAVE UPDATED CSV
@@ -834,6 +874,18 @@ def main():
         mime="text/csv"
     )
 
+    # --------------------------
+    # 15) GENERATE POWERPOINT REPORT
+    # --------------------------
+    st.subheader("Generate PowerPoint Report")
+    if st.button("Download PowerPoint Report"):
+        pptx_buffer = create_pptx_report(charts_data)
+        st.download_button(
+            label="Download PPTX",
+            data=pptx_buffer,
+            file_name="S-Curve_Analysis_Report.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        )
+
 if __name__ == "__main__":
     main()
-

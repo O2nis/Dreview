@@ -7,7 +7,7 @@ import datetime as dt
 import numpy as np
 import seaborn as sns
 from cycler import cycler
-import squarify  # Added for treemap
+import squarify
 
 plt.rcParams.update({'font.size': 8})
 
@@ -19,42 +19,28 @@ def robust_parse_date(d):
         - pd.NaT for invalid dates
         - Dates are always converted to 'dd-MMM-yy' format (e.g., '11-MAY-25')
     """
-    # Handle null/empty values first
     if pd.isna(d) or d in ['', '########', '0-Jan-00', '00-Jan-00', 'NaN', 'NaT']:
         return pd.NaT
     
-    # If already in correct format, return as-is
     if isinstance(d, str) and re.match(r'^\d{2}-[A-Z]{3}-\d{2}$', d.upper()):
         try:
             return pd.to_datetime(d, format='%d-%b-%y')
         except:
             pass
     
-    # Try multiple common date formats
     date_formats = [
-        '%d-%b-%y',    # 11-MAY-25
-        '%d-%B-%y',    # 11-May-25
-        '%d/%m/%Y',    # 11/05/2025
-        '%m/%d/%Y',    # 05/11/2025
-        '%Y-%m-%d',    # 2025-05-11
-        '%b %d, %Y',   # May 11, 2025
-        '%B %d, %Y',   # May 11, 2025
-        '%d.%m.%Y',    # 11.05.2025
-        '%Y%m%d',      # 20250511
-        '%m-%d-%Y',    # 05-11-2025
-        '%d %b %Y',    # 11 May 2025
+        '%d-%b-%y', '%d-%B-%y', '%d/%m/%Y', '%m/%d/%Y', '%Y-%m-%d',
+        '%b %d, %Y', '%B %d, %Y', '%d.%m.%Y', '%Y%m%d', '%m-%d-%Y', '%d %b %Y'
     ]
     
     for fmt in date_formats:
         try:
             dt = pd.to_datetime(d, format=fmt, errors='coerce')
             if not pd.isna(dt):
-                # Convert to standard format with uppercase month
                 return pd.to_datetime(dt.strftime('%d-%b-%y').upper(), format='%d-%b-%y')
         except:
             continue
     
-    # Final fallback - try pandas' native parser
     try:
         dt = pd.to_datetime(d, errors='coerce')
         if not pd.isna(dt):
@@ -97,10 +83,7 @@ def main():
     IFA_DELTA_DAYS = st.sidebar.number_input("Days to add for Expected Review", value=10, step=1)
     IFT_DELTA_DAYS = st.sidebar.number_input("Days to add for Final Issuance Expected", value=5, step=1)
 
-    # Add input for status to ignore
     IGNORE_STATUS = st.sidebar.text_input("Status to Ignore (case-sensitive, leave blank to include all)", value="")
-
-    # Add toggle for percentage view
     PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
 
     st.sidebar.markdown("---")
@@ -128,7 +111,6 @@ def main():
     font_scale = st.sidebar.slider("Font Scale", min_value=0.5, max_value=2.0, value=1.0, step=0.1)
     show_grid = st.sidebar.checkbox("Show Grid Lines", value=True)
 
-    # Apply Seaborn settings
     sns.set_style(seaborn_style)
     sns.set_context(seaborn_context, font_scale=font_scale)
 
@@ -153,36 +135,14 @@ def main():
         df = pd.read_csv(CSV_INPUT_PATH)
 
     df.columns = [
-        "ID",
-        "Discipline",
-        "Area",
-        "Document Title",
-        "Project Indentifer",
-        "Originator",
-        "Document Number",
-        "Document Type ",
-        "Counter ",
-        "Revision",
-        "Area code",
-        "Disc",
-        "Category",
-        "Transmittal Code",
-        "Comment Sheet OE",
-        "Comment Sheet EPC",
-        "Schedule [Days]",
-        "Issued by EPC",
-        "Issuance Expected",
-        "Review By OE",
-        "Expected review",
-        "Reply By EPC",
-        "Final Issuance Expected",
-        "Man Hours ",
-        "Status",
-        "CS rev",
-        "Flag"
+        "ID", "Discipline", "Area", "Document Title", "Project Indentifer", "Originator",
+        "Document Number", "Document Type ", "Counter ", "Revision", "Area code",
+        "Disc", "Category", "Transmittal Code", "Comment Sheet OE", "Comment Sheet EPC",
+        "Schedule [Days]", "Issued by EPC", "Issuance Expected", "Review By OE",
+        "Expected review", "Reply By EPC", "Final Issuance Expected", "Man Hours ",
+        "Status", "CS rev", "Flag"
     ]
 
-    # Filter out rows with the specified status
     if IGNORE_STATUS.strip():
         initial_len = len(df)
         df = df[df["Status"] != IGNORE_STATUS]
@@ -193,11 +153,9 @@ def main():
             st.error(f"All rows have Status '{IGNORE_STATUS}'. No data remains after filtering.")
             return
 
-    # Apply robust date parsing to all date columns
     date_columns = ["Issued by EPC", "Review By OE", "Reply By EPC"]
     for col in date_columns:
         df[col] = df[col].apply(robust_parse_date)
-        # Log any problematic dates
         na_count = df[col].isna().sum()
         if na_count > 0:
             st.warning(f"Column '{col}' has {na_count} dates that couldn't be parsed")
@@ -206,13 +164,10 @@ def main():
     df["Man Hours "] = pd.to_numeric(df["Man Hours "], errors="coerce").fillna(0)
     df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
 
-    # Calculate expected dates
     df["Issuance Expected"] = pd.Timestamp(INITIAL_DATE) + pd.to_timedelta(df["Schedule [Days]"], unit="D")
     df["Expected review"] = df["Issuance Expected"] + dt.timedelta(days=IFA_DELTA_DAYS)
     df["Final Issuance Expected"] = df["Expected review"] + dt.timedelta(days=IFT_DELTA_DAYS)
     df["Final Issuance Expected"] = pd.to_datetime(df["Final Issuance Expected"], errors='coerce')
-
-    # [Rest of data prep unchanged...]
 
     ift_expected_max = df["Final Issuance Expected"].dropna().max()
     if pd.isna(ift_expected_max):
@@ -237,16 +192,12 @@ def main():
     # --------------------------
     # 3) BUILD TIMELINES
     # --------------------------
-    # Actual timeline: from start_date to today_date
     actual_timeline = pd.date_range(start=start_date, end=today_date, freq='W')
-
-    # Expected timeline: from start_date to ift_expected_max
     expected_timeline = pd.date_range(start=start_date, end=ift_expected_max, freq='W')
 
     # --------------------------
     # 4) BUILD ACTUAL AND EXPECTED CUMULATIVE VALUES
     # --------------------------
-    # For Actual Progress
     actual_cum = []
     last_actual_value = 0.0
     last_progress_date = start_date
@@ -266,7 +217,6 @@ def main():
             if a_val > 0:
                 has_progress = True
             a_sum += mh * a_val
-
         if has_progress:
             last_actual_value = a_sum
             last_progress_date = current_date
@@ -274,12 +224,10 @@ def main():
         else:
             actual_cum.append(last_actual_value)
     
-    # Extend actual curve horizontally to today if no progress since last_progress_date
     if last_progress_date < today_date:
         actual_timeline = list(actual_timeline) + [today_date]
         actual_cum = actual_cum + [last_actual_value]
 
-    # For Expected Progress
     expected_cum = []
     last_expected_value = 0.0
     last_expected_progress_date = start_date
@@ -299,7 +247,6 @@ def main():
             if e_val > 0:
                 has_progress = True
             e_sum += mh * e_val
-
         if has_progress:
             last_expected_value = e_sum
             last_expected_progress_date = current_date
@@ -307,7 +254,6 @@ def main():
         else:
             expected_cum.append(last_expected_value)
     
-    # Extend expected curve horizontally to end date if no progress since last_expected_progress_date
     if pd.notna(ift_expected_max) and last_expected_progress_date < ift_expected_max:
         expected_timeline = list(expected_timeline) + [ift_expected_max]
         expected_cum = expected_cum + [last_expected_value]
@@ -316,7 +262,7 @@ def main():
     final_expected = expected_cum[-1]
 
     # --------------------------
-    # 5) PROJECTED RECOVERY LINE (FROM TODAY'S ACTUAL)
+    # 5) PROJECTED RECOVERY LINE
     # --------------------------
     if today_date <= actual_timeline[0]:
         today_idx = 0
@@ -335,7 +281,6 @@ def main():
     expected_today = expected_cum[expected_today_idx]
 
     gap_hrs = final_expected - actual_today
-
     projected_timeline = []
     projected_cumulative = []
     recovery_end_date = None
@@ -346,14 +291,11 @@ def main():
         delay_fraction = gap_hrs / final_expected
         T_recover_months = project_months * delay_fraction * RECOVERY_FACTOR
         T_recover_weeks = T_recover_months * (30.4 / 7.0)
-
         if T_recover_weeks < 1:
             T_recover_weeks = 1
-
         slope_new = gap_hrs / T_recover_weeks
         last_date = today_date
         cum_val = actual_today
-
         steps = int(T_recover_weeks) + 2
         for _ in range(steps):
             projected_timeline.append(last_date)
@@ -362,15 +304,12 @@ def main():
                 break
             last_date = last_date + dt.timedelta(weeks=1)
             cum_val = min(final_expected, cum_val + slope_new)
-
         recovery_end_date = last_date
 
     # --------------------------
     # 6) S-CURVE
     # --------------------------
     st.subheader("S-Curve with Delay Recovery")
-
-    # Adjust y-axis values if percentage view is selected
     y_actual = [x/total_mh*100 for x in actual_cum] if PERCENTAGE_VIEW else actual_cum
     y_expected = [x/total_mh*100 for x in expected_cum] if PERCENTAGE_VIEW else expected_cum
     y_projected = [x/total_mh*100 for x in projected_cumulative] if PERCENTAGE_VIEW and projected_cumulative else projected_cumulative
@@ -380,7 +319,6 @@ def main():
     ax.plot(actual_timeline, y_actual, label="Actual Progress", color=actual_color, linewidth=2)
     ax.plot(expected_timeline, y_expected, label="Expected Progress", color=expected_color, linewidth=2)
 
-    # Add horizontal extensions
     if last_progress_date < today_date:
         ax.hlines(y=y_actual[-1], xmin=last_progress_date, xmax=today_date, 
                  color=actual_color, linestyle='-', linewidth=2)
@@ -391,12 +329,8 @@ def main():
 
     if projected_timeline:
         ax.plot(
-            projected_timeline,
-            y_projected,
-            linestyle=":",
-            label="Projected (Recovery Factor)",
-            color=projected_color,
-            linewidth=3
+            projected_timeline, y_projected, linestyle=":", label="Projected (Recovery Factor)",
+            color=projected_color, linewidth=3
         )
 
     ax.set_title("S-Curve with Delay Recovery", fontsize=12)
@@ -409,16 +343,12 @@ def main():
     plt.xticks(rotation=45)
     plt.tight_layout()
 
-    # Add vertical lines and annotations
     ax.axvline(today_date, color=today_color, linestyle="--", linewidth=1.5, label="Today")
     ax.annotate(
         f"Today\n{today_date.strftime('%d-%b-%Y')}",
         xy=(today_date, (y_expected[-1] if PERCENTAGE_VIEW else final_expected) * 0.1),
-        xytext=(10, 10),
-        textcoords="offset points",
-        color=today_color,
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
-        fontsize=8
+        xytext=(10, 10), textcoords="offset points", color=today_color,
+        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7), fontsize=8
     )
 
     if pd.notna(ift_expected_max):
@@ -426,12 +356,9 @@ def main():
         ax.annotate(
             f"Original End\n{ift_expected_max.strftime('%d-%b-%Y')}",
             xy=(ift_expected_max, (y_expected[-1] if PERCENTAGE_VIEW else final_expected) * 0.2),
-            xytext=(-100, 10),
-            textcoords="offset points",
-            color=end_date_color,
+            xytext=(-100, 10), textcoords="offset points", color=end_date_color,
             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
-            fontsize=8,
-            arrowprops=dict(arrowstyle="->", color=end_date_color)
+            fontsize=8, arrowprops=dict(arrowstyle="->", color=end_date_color)
         )
 
     if recovery_end_date:
@@ -439,32 +366,20 @@ def main():
         ax.annotate(
             f"Recovery End\n{recovery_end_date.strftime('%d-%b-%Y')}",
             xy=(recovery_end_date, (y_expected[-1] if PERCENTAGE_VIEW else final_expected) * 0.3),
-            xytext=(10, 10),
-            textcoords="offset points",
-            color=end_date_color,
+            xytext=(10, 10), textcoords="offset points", color=end_date_color,
             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
-            fontsize=8,
-            arrowprops=dict(arrowstyle="->", color=end_date_color)
+            fontsize=8, arrowprops=dict(arrowstyle="->", color=end_date_color)
         )
 
-    # Add delay annotation
     delay_today = expected_today - actual_today
     delay_pct = delay_today/final_expected*100 if final_expected > 0 else 0
-    if PERCENTAGE_VIEW:
-        delay_text = f"Current Delay: {delay_pct:.1f}%"
-    else:
-        delay_text = f"Current Delay: {delay_today:,.1f} MH\n({delay_pct:.1f}%)"
+    delay_text = f"Current Delay: {delay_pct:.1f}%" if PERCENTAGE_VIEW else f"Current Delay: {delay_today:,.1f} MH\n({delay_pct:.1f}%)"
     
     ax.annotate(
-        delay_text,
-        xy=(today_date, (y_actual[today_idx] + y_expected[expected_today_idx])/2),
-        xytext=(10, -50),
-        textcoords="offset points",
-        color=today_color,
+        delay_text, xy=(today_date, (y_actual[today_idx] + y_expected[expected_today_idx])/2),
+        xytext=(10, -50), textcoords="offset points", color=today_color,
         bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
-        arrowprops=dict(arrowstyle="->", color=today_color),
-        ha="left",
-        fontsize=8
+        arrowprops=dict(arrowstyle="->", color=today_color), ha="left", fontsize=8
     )
 
     st.pyplot(fig)
@@ -482,7 +397,7 @@ def main():
         plt.rc("axes", prop_cycle=blue_cycler)
     elif color_scheme == "Shades of Green":
         plt.rc("axes", prop_cycle=green_cycler)
-    else:  # Seaborn Palette
+    else:
         palette_colors = sns.color_palette(seaborn_palette, n_colors=10)
         palette_cycler = cycler(color=palette_colors)
         plt.rc("axes", prop_cycle=palette_cycler)
@@ -501,7 +416,6 @@ def main():
             a_prog += IFA_WEIGHT
         if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= end_date:
             a_prog += IFT_WEIGHT
-
         e_prog = 0.0
         if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= end_date:
             e_prog += IFR_WEIGHT
@@ -509,7 +423,6 @@ def main():
             e_prog += IFA_WEIGHT
         if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= end_date:
             e_prog += IFT_WEIGHT
-
         final_actual_progress.append(row["Man Hours "] * a_prog)
         final_expected_progress.append(row["Man Hours "] * e_prog)
 
@@ -518,7 +431,6 @@ def main():
 
     by_disc = df.groupby("Discipline")[["Actual_Progress_At_Final","Expected_Progress_At_Final"]].sum()
     
-    # Convert to percentage if selected
     if PERCENTAGE_VIEW:
         by_disc["Actual_Progress_At_Final"] = by_disc["Actual_Progress_At_Final"] / total_mh * 100
         by_disc["Expected_Progress_At_Final"] = by_disc["Expected_Progress_At_Final"] / total_mh * 100
@@ -530,20 +442,14 @@ def main():
     fig2, ax2 = plt.subplots(figsize=(8,5))
     x = range(len(by_disc.index))
     width = 0.35
-
     ax2.bar(
-        [i - width/2 for i in x],
-        by_disc["Actual_Progress_At_Final"],
-        width=width,
-        label='Actual Works' if PERCENTAGE_VIEW else 'Actual Hours'
+        [i - width/2 for i in x], by_disc["Actual_Progress_At_Final"],
+        width=width, label='Actual Works' if PERCENTAGE_VIEW else 'Actual Hours'
     )
     ax2.bar(
-        [i + width/2 for i in x],
-        by_disc["Expected_Progress_At_Final"],
-        width=width,
-        label='Expected Works' if PERCENTAGE_VIEW else 'Expected Hours'
+        [i + width/2 for i in x], by_disc["Expected_Progress_At_Final"],
+        width=width, label='Expected Works' if PERCENTAGE_VIEW else 'Expected Hours'
     )
-
     ax2.set_title("Actual vs. Expected Works by Discipline" if PERCENTAGE_VIEW else "Actual vs. Expected Hours by Discipline", fontsize=10)
     ax2.set_xlabel("Discipline", fontsize=9)
     ax2.set_ylabel(y_label, fontsize=9)
@@ -560,41 +466,31 @@ def main():
     # --------------------------
     total_actual = df["Actual_Progress_At_Final"].sum()
     overall_pct = total_actual / total_mh if total_mh > 0 else 0
-
     ifr_delivered = df["Issued by EPC"].notna().sum()
     total_docs = len(df)
     ifr_values = [ifr_delivered, total_docs - ifr_delivered]
 
     st.subheader("Donut Charts")
     col1, col2 = st.columns(2)
-
     with col1:
         st.write("**Total Project Completion**")
         fig3, ax3 = plt.subplots(figsize=(4,4))
         ax3.pie(
-            [overall_pct, 1 - overall_pct],
-            labels=["Completed", "Remaining"],
-            autopct="%1.1f%%",
-            startangle=140,
-            wedgeprops={"width":0.4}
+            [overall_pct, 1 - overall_pct], labels=["Completed", "Remaining"],
+            autopct="%1.1f%%", startangle=140, wedgeprops={"width":0.4}
         )
         ax3.set_title("Project Completion", fontsize=9)
         st.pyplot(fig3)
-
     with col2:
         st.write("**Issued By EPC Status**")
         def ifr_autopct(pct):
             total_count = sum(ifr_values)
             docs = int(round(pct * total_count / 100.0))
             return f"{docs} docs" if docs > 0 else ""
-
         fig_ifr, ax_ifr = plt.subplots(figsize=(4,4))
         ax_ifr.pie(
-            ifr_values,
-            labels=["Issued by EPC", "Not Yet Issued"],
-            autopct=ifr_autopct,
-            startangle=140,
-            wedgeprops={"width":0.4}
+            ifr_values, labels=["Issued by EPC", "Not Yet Issued"],
+            autopct=ifr_autopct, startangle=140, wedgeprops={"width":0.4}
         )
         ax_ifr.set_title("Issued By EPC Status", fontsize=9)
         st.pyplot(fig_ifr)
@@ -603,30 +499,20 @@ def main():
     # 10) NESTED PIE CHART FOR DISCIPLINE
     # --------------------------
     st.subheader("Nested Pie Chart: Document Completion by Discipline")
-
-    # Helper function to determine document status
     def get_doc_status(row):
         if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
             return "Completed"
         else:
             return "Incomplete"
-
     df["Doc_Status"] = df.apply(get_doc_status, axis=1)
-
-    # Prepare data for Discipline nested pie chart
     disc_counts = df.groupby("Discipline").size()
     if disc_counts.empty:
         st.warning("No Discipline data available for pie chart.")
     else:
-        # Create figure with adjusted size
         fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(10, 10))
-
-        # Outer pie (Discipline) - Use selected color scheme
         outer_labels = disc_counts.index
         outer_sizes = disc_counts.values
         n_disciplines = len(outer_labels)
-
-        # Define outer colors based on color_scheme
         if color_scheme == "Standard":
             outer_colors = [c['color'] for c in plt.rcParamsDefault['axes.prop_cycle']][:n_disciplines]
         elif color_scheme == "Shades of Blue":
@@ -637,95 +523,55 @@ def main():
             outer_colors = ["#ccffcc", "#99ff99", "#66ff66", "#33cc33", "#009900"][:n_disciplines]
             if n_disciplines > 5:
                 outer_colors = sns.color_palette("Greens", n_colors=n_disciplines)
-        else:  # Seaborn Palette
+        else:
             outer_colors = sns.color_palette(seaborn_palette, n_colors=n_disciplines)
-
-        # Inner pie (One wedge per document)
         inner_sizes = []
         inner_colors = []
         status_colors = {"Completed": "#808080", "Incomplete": "#F0F0F0"}
-
-        # Collect inner sizes (1 per document) and colors
         for disc in disc_counts.index:
             disc_docs = df[df["Discipline"] == disc]
             for _, row in disc_docs.iterrows():
                 inner_sizes.append(1)
                 inner_colors.append(status_colors[row["Doc_Status"]])
-
-        # Validate inner_sizes
         if not inner_sizes or sum(inner_sizes) == 0:
             st.warning("No valid data for inner pie chart (Discipline). All counts are zero or empty.")
         else:
-            # Plot outer pie (Discipline)
             outer_wedges, outer_texts = ax_nested_disc.pie(
-                outer_sizes,
-                radius=1.0,
-                labels=None,
-                startangle=90,
-                wedgeprops=dict(width=0.3, edgecolor='w'),
-                colors=outer_colors
+                outer_sizes, radius=1.0, labels=None, startangle=90,
+                wedgeprops=dict(width=0.3, edgecolor='w'), colors=outer_colors
             )
-
-            # Add discipline names and counts as annotations
             for i, (wedge, label, count) in enumerate(zip(outer_wedges, outer_labels, outer_sizes)):
                 angle = (wedge.theta2 - wedge.theta1)/2. + wedge.theta1
                 x = 1.1 * np.cos(np.deg2rad(angle))
                 y = 1.1 * np.sin(np.deg2rad(angle))
                 horizontalalignment = {-1: "right", 1: "left"}.get(np.sign(x), "center")
-
-                # Add discipline name (regular font)
                 ax_nested_disc.annotate(
-                    label,
-                    xy=(x, y),
-                    xytext=(1.5*np.sign(x), 0),
-                    textcoords='offset points',
-                    ha=horizontalalignment,
-                    va='center',
-                    fontsize=8,
-                    fontweight='normal'
+                    label, xy=(x, y), xytext=(1.5*np.sign(x), 0), textcoords='offset points',
+                    ha=horizontalalignment, va='center', fontsize=8, fontweight='normal'
                 )
-
-                # Add count below (bold, in a box)
                 ax_nested_disc.annotate(
-                    f"({count})",
-                    xy=(x, y),
-                    xytext=(1.5*np.sign(x), -15),
-                    textcoords='offset points',
-                    ha=horizontalalignment,
-                    va='center',
-                    fontsize=10,
-                    fontweight='bold',
+                    f"({count})", xy=(x, y), xytext=(1.5*np.sign(x), -15), textcoords='offset points',
+                    ha=horizontalalignment, va='center', fontsize=10, fontweight='bold',
                     bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8)
                 )
-
-            # Plot inner pie (one wedge per document, no text)
             try:
                 inner_wedges = ax_nested_disc.pie(
-                    inner_sizes,
-                    radius=0.7,
-                    startangle=90,
-                    wedgeprops=dict(width=0.3, edgecolor='w'),
+                    inner_sizes, radius=0.7, startangle=90, wedgeprops=dict(width=0.3, edgecolor='w'),
                     colors=inner_colors
                 )[0]
             except ValueError as e:
                 st.error(f"Error plotting inner pie chart (Discipline): {str(e)}")
                 plt.close(fig_nested_disc)
                 st.stop()
-
-            # Create status legend using dummy patches
             from matplotlib.patches import Patch
             status_patches = [
                 Patch(color=status_colors["Completed"], label="Completed"),
                 Patch(color=status_colors["Incomplete"], label="Incomplete")
             ]
             ax_nested_disc.legend(
-                handles=status_patches,
-                title="Status",
-                loc="center left",
-                bbox_to_anchor=(1, 0.5),
-                fontsize=8
+                handles=status_patches, title="Status", loc="center left",
+                bbox_to_anchor=(1, 0.5), fontsize=8
             )
-
             ax_nested_disc.set_title("Documents by Discipline and Completion", fontsize=10)
             plt.tight_layout()
             st.pyplot(fig_nested_disc)
@@ -736,9 +582,7 @@ def main():
     df["Issued_bool"] = df["Issued by EPC"].notna().astype(int)
     df["Review_bool"] = df["Review By OE"].notna().astype(int)
     df["Reply_bool"] = df["Reply By EPC"].notna().astype(int)
-
     disc_counts = df.groupby("Discipline")[["Issued_bool","Review_bool","Reply_bool"]].sum()
-
     st.subheader("Number of Docs with Issued, Review, Reply by Discipline")
     fig4, ax4 = plt.subplots(figsize=(8,5))
     disc_counts.plot(kind="barh", stacked=True, ax=ax4)
@@ -759,10 +603,8 @@ def main():
     # 12) DELAY BY DISCIPLINE (AS OF TODAY)
     # --------------------------
     st.subheader("Delay Percentage by Discipline (As of Today)")
-
     actual_prog_today = []
     expected_prog_today = []
-
     for _, row in df.iterrows():
         a_val = 0.0
         if pd.notna(row["Issued by EPC"]) and row["Issued by EPC"] <= today_date:
@@ -771,7 +613,6 @@ def main():
             a_val += IFA_WEIGHT
         if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= today_date:
             a_val += IFT_WEIGHT
-
         e_val = 0.0
         if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= today_date:
             e_val += IFR_WEIGHT
@@ -779,20 +620,16 @@ def main():
             e_val += IFA_WEIGHT
         if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= today_date:
             e_val += IFT_WEIGHT
-
         actual_prog_today.append(row["Man Hours "] * a_val)
         expected_prog_today.append(row["Man Hours "] * e_val)
-
     df["Actual_Progress_Today"] = actual_prog_today
     df["Expected_Progress_Today"] = expected_prog_today
-
     disc_delay = df.groupby("Discipline")[["Actual_Progress_Today","Expected_Progress_Today"]].sum()
     disc_delay["Delay_%"] = (
         (disc_delay["Expected_Progress_Today"] - disc_delay["Actual_Progress_Today"])
         / disc_delay["Expected_Progress_Today"]
     ) * 100
     disc_delay["Delay_%"] = disc_delay["Delay_%"].fillna(0)
-
     fig_delay, ax_delay = plt.subplots(figsize=(8,5))
     ax_delay.bar(disc_delay.index, disc_delay["Delay_%"])
     ax_delay.set_title("Delay in % by Discipline (Today)", fontsize=10)
@@ -804,30 +641,33 @@ def main():
         ax_delay.grid(True)
     plt.tight_layout()
     st.pyplot(fig_delay)
-
     st.write("Detailed Delay Data:")
     st.dataframe(disc_delay)
 
     # --------------------------
-    # 13) TREEMAP: DELAYED DOCUMENTS BY DISCIPLINE AND STATUS
+    # 13) TREEMAP: DELAYED DOCUMENTS BY DISCIPLINE AND MILESTONE
     # --------------------------
-    st.subheader("Treemap: Delayed Documents by Discipline and Status")
-
-    # Identify delayed documents
-    df["Is_Delayed"] = df["Actual_Progress_Today"] < df["Expected_Progress_Today"]
-
-    # Group by Discipline and Status, count delayed documents
-    delay_counts = df[df["Is_Delayed"]].groupby(["Discipline", "Status"]).size().reset_index(name="Count")
+    st.subheader("Treemap: Delayed Documents by Discipline and Milestone")
+    
+    # Define delay conditions
+    def get_delayed_milestone(row, today):
+        if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] < today and pd.isna(row["Issued by EPC"]):
+            return "Issued by EPC"
+        elif pd.notna(row["Expected review"]) and row["Expected review"] < today and pd.isna(row["Review By OE"]):
+            return "Review By OE"
+        elif pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] < today and row["Flag"] == 0:
+            return "Reply By EPC"
+        return None
+    
+    df["Delayed_Milestone"] = df.apply(lambda row: get_delayed_milestone(row, today_date), axis=1)
+    delay_counts = df[df["Delayed_Milestone"].notna()].groupby(["Discipline", "Delayed_Milestone"]).size().reset_index(name="Count")
     
     if delay_counts.empty:
         st.warning("No delayed documents found.")
     else:
-        # Prepare treemap data
         labels = []
         sizes = []
         colors = []
-        
-        # Define colors based on color_scheme
         unique_disciplines = delay_counts["Discipline"].unique()
         n_disciplines = len(unique_disciplines)
         if color_scheme == "Standard":
@@ -840,35 +680,23 @@ def main():
             discipline_colors = ["#ccffcc", "#99ff99", "#66ff66", "#33cc33", "#009900"][:n_disciplines]
             if n_disciplines > 5:
                 discipline_colors = sns.color_palette("Greens", n_colors=n_disciplines)
-        else:  # Seaborn Palette
+        else:
             discipline_colors = sns.color_palette(seaborn_palette, n_colors=n_disciplines)
-        
         discipline_color_map = dict(zip(unique_disciplines, discipline_colors))
-        
-        # For Status, use lighter shades of the Discipline color
         for _, row in delay_counts.iterrows():
             disc = row["Discipline"]
-            status = row["Status"]
+            milestone = row["Delayed_Milestone"]
             count = row["Count"]
-            labels.append(f"{disc}\n{status}\n({count})")
+            labels.append(f"{disc}\n{milestone}\n({count})")
             sizes.append(count)
-            # Use the Discipline color, adjust alpha for Status to distinguish
-            base_color = discipline_color_map[disc]
-            colors.append(base_color)
-        
-        # Create treemap
+            colors.append(discipline_color_map[disc])
         fig_treemap, ax_treemap = plt.subplots(figsize=(10, 6))
         squarify.plot(
-            sizes=sizes,
-            label=labels,
-            color=colors,
-            alpha=0.8,
-            text_kwargs={'fontsize': 8, 'wrap': True},
-            ax=ax_treemap
+            sizes=sizes, label=labels, color=colors, alpha=0.8,
+            text_kwargs={'fontsize': 8, 'wrap': True}, ax=ax_treemap
         )
-        
-        ax_treemap.set_title("Delayed Documents by Discipline and Status", fontsize=10)
-        ax_treemap.axis('off')  # Remove axes for treemap
+        ax_treemap.set_title("Delayed Documents by Discipline and Milestone", fontsize=10)
+        ax_treemap.axis('off')
         plt.tight_layout()
         st.pyplot(fig_treemap)
 
@@ -884,9 +712,7 @@ def main():
             return "Issued by EPC"
         else:
             return "NO ISSUANCE"
-
     df["FinalMilestone"] = df.apply(get_final_milestone, axis=1)
-
     st.subheader("Documents by Final Milestone (Stacked by Status)")
     group_df = (
         df.groupby(["FinalMilestone","Status"])["ID"]
@@ -895,19 +721,12 @@ def main():
     )
     pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
     pivoted = pivoted.reindex(["Issued by EPC","Review By OE","Reply By EPC"]).dropna(how="all")
-
     fig_status, ax_status = plt.subplots(figsize=(7,5))
     pivoted.plot(kind="bar", stacked=True, ax=ax_status)
-
     for container in ax_status.containers:
         ax_status.bar_label(
-            container,
-            label_type='center',
-            fmt='%d',
-            fontsize=8,
-            color='white'
+            container, label_type='center', fmt='%d', fontsize=8, color='white'
         )
-
     ax_status.set_title("Documents by Final Milestone (Stacked by Status)", fontsize=10)
     ax_status.set_xlabel("Final Milestone", fontsize=9)
     ax_status.set_ylabel("Number of Documents", fontsize=9)
@@ -925,7 +744,6 @@ def main():
     df["Issuance Expected"] = pd.to_datetime(df["Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
     df["Expected review"] = pd.to_datetime(df["Expected review"], errors="coerce").dt.strftime("%d-%b-%y")
     df["Final Issuance Expected"] = pd.to_datetime(df["Final Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
-
     st.subheader("Download Updated CSV")
     st.download_button(
         label="Download Updated CSV",

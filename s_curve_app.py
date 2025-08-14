@@ -83,7 +83,7 @@ def main():
     IFA_DELTA_DAYS = st.sidebar.number_input("Days to add for Expected Review", value=10, step=1)
     IFT_DELTA_DAYS = st.sidebar.number_input("Days to add for Final Issuance Expected", value=5, step=1)
 
-    IGNORE_STATUS = st.sidebar.text_input("Status to Ignore (case-sensitive, leave blank to include all)", value="")
+    IGNORE_STATUS = st.sidebar.text_input("Status to Ignore (comma-separated, case-sensitive, leave blank to include all)", value="")
     PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
 
     st.sidebar.markdown("---")
@@ -144,13 +144,14 @@ def main():
     ]
 
     if IGNORE_STATUS.strip():
+        statuses_to_exclude = [s.strip() for s in IGNORE_STATUS.split(',') if s.strip()]
         initial_len = len(df)
-        df = df[df["Status"] != IGNORE_STATUS]
+        df = df[~df["Status"].isin(statuses_to_exclude)]
         filtered_len = len(df)
         if filtered_len < initial_len:
-            st.info(f"Filtered out {initial_len - filtered_len} rows with Status '{IGNORE_STATUS}'")
+            st.info(f"Filtered out {initial_len - filtered_len} rows with Status in: {', '.join(statuses_to_exclude)}")
         if filtered_len == 0:
-            st.error(f"All rows have Status '{IGNORE_STATUS}'. No data remains after filtering.")
+            st.error(f"All rows have Status in exclusion list. No data remains after filtering.")
             return
 
     date_columns = ["Issued by EPC", "Review By OE", "Reply By EPC"]
@@ -645,63 +646,7 @@ def main():
     st.dataframe(disc_delay)
 
     # --------------------------
-    # 13) TREEMAP: DELAYED DOCUMENTS BY DISCIPLINE AND MILESTONE
-    # --------------------------
-    st.subheader("Treemap: Delayed Documents by Discipline and Milestone")
-    
-    # Define delay conditions
-    def get_delayed_milestone(row, today):
-        if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] < today and pd.isna(row["Issued by EPC"]):
-            return "Issued by EPC"
-        elif pd.notna(row["Expected review"]) and row["Expected review"] < today and pd.isna(row["Review By OE"]):
-            return "Review By OE"
-        elif pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] < today and row["Flag"] == 0:
-            return "Reply By EPC"
-        return None
-    
-    df["Delayed_Milestone"] = df.apply(lambda row: get_delayed_milestone(row, today_date), axis=1)
-    delay_counts = df[df["Delayed_Milestone"].notna()].groupby(["Discipline", "Delayed_Milestone"]).size().reset_index(name="Count")
-    
-    if delay_counts.empty:
-        st.warning("No delayed documents found.")
-    else:
-        labels = []
-        sizes = []
-        colors = []
-        unique_disciplines = delay_counts["Discipline"].unique()
-        n_disciplines = len(unique_disciplines)
-        if color_scheme == "Standard":
-            discipline_colors = [c['color'] for c in plt.rcParamsDefault['axes.prop_cycle']][:n_disciplines]
-        elif color_scheme == "Shades of Blue":
-            discipline_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff"][:n_disciplines]
-            if n_disciplines > 5:
-                discipline_colors = sns.color_palette("Blues", n_colors=n_disciplines)
-        elif color_scheme == "Shades of Green":
-            discipline_colors = ["#ccffcc", "#99ff99", "#66ff66", "#33cc33", "#009900"][:n_disciplines]
-            if n_disciplines > 5:
-                discipline_colors = sns.color_palette("Greens", n_colors=n_disciplines)
-        else:
-            discipline_colors = sns.color_palette(seaborn_palette, n_colors=n_disciplines)
-        discipline_color_map = dict(zip(unique_disciplines, discipline_colors))
-        for _, row in delay_counts.iterrows():
-            disc = row["Discipline"]
-            milestone = row["Delayed_Milestone"]
-            count = row["Count"]
-            labels.append(f"{disc}\n{milestone}\n({count})")
-            sizes.append(count)
-            colors.append(discipline_color_map[disc])
-        fig_treemap, ax_treemap = plt.subplots(figsize=(10, 6))
-        squarify.plot(
-            sizes=sizes, label=labels, color=colors, alpha=0.8,
-            text_kwargs={'fontsize': 8, 'wrap': True}, ax=ax_treemap
-        )
-        ax_treemap.set_title("Delayed Documents by Discipline and Milestone", fontsize=10)
-        ax_treemap.axis('off')
-        plt.tight_layout()
-        st.pyplot(fig_treemap)
-
-    # --------------------------
-    # 14) FINAL MILESTONE + STATUS STACKED BAR
+    # 13) FINAL MILESTONE + STATUS STACKED BAR
     # --------------------------
     def get_final_milestone(row):
         if pd.notna(row["Reply By EPC"]):
@@ -739,7 +684,7 @@ def main():
     st.pyplot(fig_status)
 
     # --------------------------
-    # 15) SAVE UPDATED CSV
+    # 14) SAVE UPDATED CSV
     # --------------------------
     df["Issuance Expected"] = pd.to_datetime(df["Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
     df["Expected review"] = pd.to_datetime(df["Expected review"], errors="coerce").dt.strftime("%d-%b-%y")

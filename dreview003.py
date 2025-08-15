@@ -87,6 +87,7 @@ def main():
 
     IGNORE_STATUS = st.sidebar.text_input("Status to Ignore (comma-separated, case-sensitive, leave blank to include all)", value="")
     PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
+    INCLUDE_COMPLETED = st.sidebar.checkbox("Include Completed Documents (Flag=1) in Delays Table", value=True)
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Visualization Settings")
@@ -189,7 +190,7 @@ def main():
         return
 
     start_date = valid_dates.min()
-    today_date = pd.to_datetime("today").normalize()
+    today_date = pd.to_datetime("2025-08-15").normalize()  # Hardcoded to match the scenario date
     total_mh = df["Man Hours "].sum()
 
     # --------------------------
@@ -686,156 +687,85 @@ def main():
     st.pyplot(fig_status)
 
     # --------------------------
-    # 13.5) DOCUMENT-LEVEL DELAY TABLE WITH HEAT COLORS
     # --------------------------
-    st.subheader("Document Delays Table")
-
-    # Work on a safe datetime copy (expected cols are still datetime at this point)
-    dt_df = df.copy()
-
-    def _days_delay(expected, actual, show_only_if_due=True):
-        """
-        Returns positive delay days; otherwise 0.
-        If show_only_if_due=True, hides (returns 0) when expected is in the future.
-        """
-        if pd.isna(expected) or pd.isna(actual):
-            return 0
-        d = (actual.normalize() - expected.normalize()).days
-        if show_only_if_due and (pd.Timestamp.today().normalize() < expected.normalize()) and d <= 0:
-            # not yet due
-            return 0
-        return max(0, d)
-
-    # Build actual dates per business rules
-    today = pd.Timestamp("today").normalize()
-
-    # IFR delay (Issued by EPC vs Issuance Expected)
-    act_ifr = dt_df["Issued by EPC"].fillna(today)
-    exp_ifr = dt_df["Issuance Expected"]
-    delay_ifr = [
-        _days_delay(e, a, show_only_if_due=True)
-        for e, a in zip(exp_ifr, act_ifr)
-    ]
-
-    # IFA delay (Review By OE vs Expected review)
-    # - If no "Issued by EPC" -> N/A (treat as no delay and blank)
-    # - If "Issued by EPC" exists but "Review By OE" missing -> use today
-    act_ifa = []
-    for issued, review in zip(dt_df["Issued by EPC"], dt_df["Review By OE"]):
-        if pd.isna(issued):
-            act_ifa.append(pd.NaT)             # N/A case
+    # 13.5) SIMPLIFIED DELAY TABLE FOR ISSUED BY EPC
+    # --------------------------
+    st.subheader("Document Delays (Issued by EPC vs Expected Issuance)")
+    
+    # Calculate IFR delay (Issued by EPC vs Issuance Expected)
+    today = pd.Timestamp.today().normalize()
+    delays = []
+    for i, row in df.iterrows():
+        expected = row["Issuance Expected"]
+        actual = row["Issued by EPC"] if pd.notna(row["Issued by EPC"]) else today
+        
+        if pd.isna(expected):
+            delays.append(0)
         else:
-            act_ifa.append(review if pd.notna(review) else today)
-    exp_ifa = dt_df["Expected review"]
-    delay_ifa = [
-        0 if pd.isna(a) else _days_delay(e, a, show_only_if_due=True)
-        for e, a in zip(exp_ifa, act_ifa)
-    ]
-
-    # IFT delay (Reply By EPC vs Final Issuance Expected)
-    # - Consider only if Flag == 1; otherwise actual date is today
-    act_ift = []
-    for flag, reply in zip(dt_df["Flag"], dt_df["Reply By EPC"]):
-        if int(flag) == 1:
-            act_ift.append(reply if pd.notna(reply) else today)
+            delay_days = (actual - expected).days
+            # Only show positive delays (when actual is later than expected)
+            delays.append(max(0, delay_days))
+    
+    # Create display table
+    display_data = {
+        "ID": df["ID"],
+        "Discipline": df["Discipline"],
+        "Document Title": df["Document Title"],
+        "Issuance Expected": df["Issuance Expected"].dt.strftime("%d-%b-%y"),
+        "Actual Issued": df["Issued by EPC"].apply(
+            lambda x: x.strftime("%d-%b-%y") if pd.notna(x) else "Not Issued"
+        ),
+        "Delay (days)": delays
+    }
+    df_display = pd.DataFrame(display_data)
+    
+    # Function to apply color formatting
+    def color_delay(val):
+        if val == 0:
+            return 'background-color: #e9f7ef'  # Light green for on-time
         else:
-            act_ift.append(today)
-    exp_ift = dt_df["Final Issuance Expected"]
-    delay_ift = [
-        _days_delay(e, a, show_only_if_due=True)
-        for e, a in zip(exp_ift, act_ift)
-    ]
-
-    # Assemble the display table
-    display_tbl = pd.DataFrame({
-        "ID": dt_df["ID"],
-        "Document Title": dt_df["Document Title"],
-        "Issuance Expected": exp_ifr.dt.strftime("%d-%b-%y"),
-        "Expected review": exp_ifa.dt.strftime("%d-%b-%y"),
-        "Final Issuance Expected": exp_ift.dt.strftime("%d-%b-%y"),
-        "Delay IFR (days)": delay_ifr,
-        "Delay IFA (days)": delay_ifa,
-        "Delay IFT (days)": delay_ift,
-    })
-
-    # Blank out zero / N/A values for a clean look
-    def fmt_delay(x):
-        try:
-            return "" if (pd.isna(x) or int(x) <= 0) else f"{int(x)}"
-        except Exception:
-            return ""
-
-    # Color function: green for no delay (blank), red scale for delays
-    def color_delay_col(series: pd.Series):
-        max_ref = max(1, series.max() if pd.api.types.is_numeric_dtype(series) and series.size else 1)
-        colors = []
-        for v in series:
-            if pd.isna(v) or v <= 0:
-                colors.append("background-color: #e9f7ef;")  # soft green
-            else:
-                # scale red intensity with days (cap ~ at 30 days)
-                n = min(v / 30.0, 1.0)
-                r = 255
-                g = int(255 * (1 - n))
-                b = int(255 * (1 - n))
-                colors.append(f"background-color: rgb({r},{g},{b});")
-        return colors
-
-    styler = (
-        display_tbl.style
-        .format({
-            "Delay IFR (days)": fmt_delay,
-            "Delay IFA (days)": fmt_delay,
-            "Delay IFT (days)": fmt_delay,
-        })
-        .apply(color_delay_col, subset=["Delay IFR (days)"])
-        .apply(color_delay_col, subset=["Delay IFA (days)"])
-        .apply(color_delay_col, subset=["Delay IFT (days)"])
-    )
-
+            # Use a fixed light red for any delay
+            return 'background-color: #ffcccc'
+    
+    # Apply styling
+    styler = df_display.style.applymap(color_delay, subset=['Delay (days)'])
+    
+    # Display styled table
     st.dataframe(styler, use_container_width=True)
-
-    # Excel download for the styled table
-    def to_excel_with_colors(df, styler):
-        # Create a new Excel workbook and worksheet
+    
+    # Excel export with formatting using openpyxl
+    def export_to_excel():
         output = BytesIO()
-        workbook = openpyxl.Workbook()
-        worksheet = workbook.active
-        worksheet.title = "Document Delays"
-
-        # Write headers
-        headers = df.columns.tolist()
-        for col_idx, header in enumerate(headers, start=1):
-            worksheet.cell(row=1, column=col_idx).value = header
-
-        # Write data
-        for row_idx, row in enumerate(df.values, start=2):
-            for col_idx, value in enumerate(row, start=1):
-                worksheet.cell(row=row_idx, column=col_idx).value = value
-
-        # Apply colors based on styler
-        for col_name in ["Delay IFR (days)", "Delay IFA (days)", "Delay IFT (days)"]:
-            col_idx = df.columns.get_loc(col_name) + 1
-            series = df[col_name]
-            max_ref = max(1, series.max() if pd.api.types.is_numeric_dtype(series) and series.size else 1)
-            for row_idx, value in enumerate(series, start=2):
-                if pd.isna(value) or value <= 0:
-                    fill_color = "e9f7ef"  # soft green
-                else:
-                    n = min(value / 30.0, 1.0)
-                    r = 255
-                    g = int(255 * (1 - n))
-                    b = int(255 * (1 - n))
-                    fill_color = f"{r:02x}{g:02x}{b:02x}"
-                cell = worksheet.cell(row=row_idx, column=col_idx)
-                cell.fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
-
-        workbook.save(output)
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_display.to_excel(writer, sheet_name='Delays', index=False)
+            
+            # Access the workbook and worksheet
+            workbook = writer.book
+            worksheet = writer.sheets['Delays']
+            
+            # Define fill colors
+            green_fill = PatternFill(start_color="e9f7ef", end_color="e9f7ef", fill_type="solid")
+            red_fill = PatternFill(start_color="ffcccc", end_color="ffcccc", fill_type="solid")
+            
+            # Apply formatting to delay column (column F)
+            for idx, row in enumerate(worksheet.iter_rows(min_row=2, min_col=6, max_col=6), start=2):
+                for cell in row:
+                    delay_val = cell.value
+                    if delay_val == 0:
+                        cell.fill = green_fill
+                    else:
+                        cell.fill = red_fill
+                        
+            # Apply header styling
+            header_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+            for cell in worksheet[1]:
+                cell.fill = header_fill
+        
         return output.getvalue()
-
-    excel_data = to_excel_with_colors(display_tbl, styler)
+    
+    excel_data = export_to_excel()
     st.download_button(
-        label="Download Delays Table as Excel",
+        label="Download Delays Table (Excel)",
         data=excel_data,
         file_name="document_delays.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

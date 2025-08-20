@@ -13,6 +13,18 @@ from io import BytesIO
 
 plt.rcParams.update({'font.size': 8})
 
+# Helper functions for the Review Timeline tab
+def is_rev_col(s):
+    s_norm = normalize_header(s)
+    return bool(re.match(r'^rev\d*$', s_norm))
+
+def is_review_col(s):
+    s_norm = normalize_header(s)
+    return bool(re.search(r'review', s_norm))
+
+def normalize_header(s):
+    return re.sub(r'[^a-z0-9]', '', str(s).lower())
+
 def robust_parse_date(d):
     """
     Enhanced date parser that handles multiple formats and converts to standard format
@@ -128,662 +140,857 @@ def main():
         st.warning("Please upload your input CSV or Excel file or download the template above.")
         return
 
-    # --------------------------
-    # 2) LOAD CSV OR EXCEL & PREP DATA WITH ROBUST DATE PARSING
-    # --------------------------
-    file_extension = CSV_INPUT_PATH.name.split('.')[-1].lower()
-    if file_extension in ['xlsx', 'xls']:
-        df = pd.read_excel(CSV_INPUT_PATH)
-    else:
-        df = pd.read_csv(CSV_INPUT_PATH)
+    # Create tabs for different views
+    tab1, tab2 = st.tabs(["S-Curve Analysis", "Review Timeline"])
 
-    df.columns = [
-        "ID", "Discipline", "Area", "Document Title", "Project Indentifer", "Originator",
-        "Document Number", "Document Type ", "Counter ", "Revision", "Area code",
-        "Disc", "Category", "Transmittal Code", "Comment Sheet OE", "Comment Sheet EPC",
-        "Schedule [Days]", "Issued by EPC", "Issuance Expected", "Review By OE",
-        "Expected review", "Reply By EPC", "Final Issuance Expected", "Man Hours ",
-        "Status", "CS rev", "Flag"
-    ]
+    with tab1:
+        # --------------------------
+        # 2) LOAD CSV OR EXCEL & PREP DATA WITH ROBUST DATE PARSING
+        # --------------------------
+        file_extension = CSV_INPUT_PATH.name.split('.')[-1].lower()
+        if file_extension in ['xlsx', 'xls']:
+            df = pd.read_excel(CSV_INPUT_PATH)
+        else:
+            df = pd.read_csv(CSV_INPUT_PATH)
 
-    if IGNORE_STATUS.strip():
-        statuses_to_exclude = [s.strip() for s in IGNORE_STATUS.split(',') if s.strip()]
-        initial_len = len(df)
-        df = df[~df["Status"].isin(statuses_to_exclude)]
-        filtered_len = len(df)
-        if filtered_len < initial_len:
-            st.info(f"Filtered out {initial_len - filtered_len} rows with Status in: {', '.join(statuses_to_exclude)}")
-        if filtered_len == 0:
-            st.error(f"All rows have Status in exclusion list. No data remains after filtering.")
+        df.columns = [
+            "ID", "Discipline", "Area", "Document Title", "Project Indentifer", "Originator",
+            "Document Number", "Document Type ", "Counter ", "Revision", "Area code",
+            "Disc", "Category", "Transmittal Code", "Comment Sheet OE", "Comment Sheet EPC",
+            "Schedule [Days]", "Issued by EPC", "Issuance Expected", "Review By OE",
+            "Expected review", "Reply By EPC", "Final Issuance Expected", "Man Hours ",
+            "Status", "CS rev", "Flag"
+        ]
+
+        if IGNORE_STATUS.strip():
+            statuses_to_exclude = [s.strip() for s in IGNORE_STATUS.split(',') if s.strip()]
+            initial_len = len(df)
+            df = df[~df["Status"].isin(statuses_to_exclude)]
+            filtered_len = len(df)
+            if filtered_len < initial_len:
+                st.info(f"Filtered out {initial_len - filtered_len} rows with Status in: {', '.join(statuses_to_exclude)}")
+            if filtered_len == 0:
+                st.error(f"All rows have Status in exclusion list. No data remains after filtering.")
+                return
+
+        date_columns = ["Issued by EPC", "Review By OE", "Reply By EPC"]
+        for col in date_columns:
+            df[col] = df[col].apply(robust_parse_date)
+            na_count = df[col].isna().sum()
+            if na_count > 0:
+                st.warning(f"Column '{col}' has {na_count} dates that couldn't be parsed")
+
+        df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
+        df["Man Hours "] = pd.to_numeric(df["Man Hours "], errors="coerce").fillna(0)
+        df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
+
+        df["Issuance Expected"] = pd.Timestamp(INITIAL_DATE) + pd.to_timedelta(df["Schedule [Days]"], unit="D")
+        df["Expected review"] = df["Issuance Expected"] + dt.timedelta(days=IFA_DELTA_DAYS)
+        df["Final Issuance Expected"] = df["Expected review"] + dt.timedelta(days=IFT_DELTA_DAYS)
+        df["Final Issuance Expected"] = pd.to_datetime(df["Final Issuance Expected"], errors='coerce')
+
+        ift_expected_max = df["Final Issuance Expected"].dropna().max()
+        if pd.isna(ift_expected_max):
+            st.warning("No valid Final Issuance Expected in data. Falling back to overall max date.")
+            ift_expected_max = (
+                pd.Series(df[["Issuance Expected","Expected review","Final Issuance Expected"]].values.ravel())
+                .dropna()
+                .max()
+            )
+
+        date_cols = ["Issued by EPC","Review By OE","Reply By EPC","Issuance Expected","Expected review","Final Issuance Expected"]
+        all_dates = df[date_cols].values.ravel()
+        valid_dates = pd.Series(all_dates).dropna()
+        if valid_dates.empty:
+            st.error("No valid milestone dates found.")
             return
 
-    date_columns = ["Issued by EPC", "Review By OE", "Reply By EPC"]
-    for col in date_columns:
-        df[col] = df[col].apply(robust_parse_date)
-        na_count = df[col].isna().sum()
-        if na_count > 0:
-            st.warning(f"Column '{col}' has {na_count} dates that couldn't be parsed")
+        start_date = valid_dates.min()
+        today_date = pd.to_datetime("2025-08-15").normalize()  # Hardcoded to match the scenario date
+        total_mh = df["Man Hours "].sum()
 
-    df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
-    df["Man Hours "] = pd.to_numeric(df["Man Hours "], errors="coerce").fillna(0)
-    df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
+        # --------------------------
+        # 3) BUILD TIMELINES
+        # --------------------------
+        actual_timeline = pd.date_range(start=start_date, end=today_date, freq='W')
+        expected_timeline = pd.date_range(start=start_date, end=ift_expected_max, freq='W')
 
-    df["Issuance Expected"] = pd.Timestamp(INITIAL_DATE) + pd.to_timedelta(df["Schedule [Days]"], unit="D")
-    df["Expected review"] = df["Issuance Expected"] + dt.timedelta(days=IFA_DELTA_DAYS)
-    df["Final Issuance Expected"] = df["Expected review"] + dt.timedelta(days=IFT_DELTA_DAYS)
-    df["Final Issuance Expected"] = pd.to_datetime(df["Final Issuance Expected"], errors='coerce')
+        # --------------------------
+        # 4) BUILD ACTUAL AND EXPECTED CUMULATIVE VALUES
+        # --------------------------
+        actual_cum = []
+        last_actual_value = 0.0
+        last_progress_date = start_date
+        
+        for current_date in actual_timeline:
+            a_sum = 0.0
+            has_progress = False
+            for _, row in df.iterrows():
+                mh = row["Man Hours "]
+                a_val = 0.0
+                if pd.notna(row["Issued by EPC"]) and row["Issued by EPC"] <= current_date:
+                    a_val += IFR_WEIGHT
+                if pd.notna(row["Review By OE"]) and row["Review By OE"] <= current_date:
+                    a_val += IFA_WEIGHT
+                if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= current_date:
+                    a_val += IFT_WEIGHT
+                if a_val > 0:
+                    has_progress = True
+                a_sum += mh * a_val
+            if has_progress:
+                last_actual_value = a_sum
+                last_progress_date = current_date
+                actual_cum.append(a_sum)
+            else:
+                actual_cum.append(last_actual_value)
+        
+        if last_progress_date < today_date:
+            actual_timeline = list(actual_timeline) + [today_date]
+            actual_cum = actual_cum + [last_actual_value]
 
-    ift_expected_max = df["Final Issuance Expected"].dropna().max()
-    if pd.isna(ift_expected_max):
-        st.warning("No valid Final Issuance Expected in data. Falling back to overall max date.")
-        ift_expected_max = (
-            pd.Series(df[["Issuance Expected","Expected review","Final Issuance Expected"]].values.ravel())
-            .dropna()
-            .max()
-        )
+        expected_cum = []
+        last_expected_value = 0.0
+        last_expected_progress_date = start_date
+        
+        for current_date in expected_timeline:
+            e_sum = 0.0
+            has_progress = False
+            for _, row in df.iterrows():
+                mh = row["Man Hours "]
+                e_val = 0.0
+                if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= current_date:
+                    e_val += IFR_WEIGHT
+                if pd.notna(row["Expected review"]) and row["Expected review"] <= current_date:
+                    e_val += IFA_WEIGHT
+                if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= current_date:
+                    e_val += IFT_WEIGHT
+                if e_val > 0:
+                    has_progress = True
+                e_sum += mh * e_val
+            if has_progress:
+                last_expected_value = e_sum
+                last_expected_progress_date = current_date
+                expected_cum.append(e_sum)
+            else:
+                expected_cum.append(last_expected_value)
+        
+        if pd.notna(ift_expected_max) and last_expected_progress_date < ift_expected_max:
+            expected_timeline = list(expected_timeline) + [ift_expected_max]
+            expected_cum = expected_cum + [last_expected_value]
 
-    date_cols = ["Issued by EPC","Review By OE","Reply By EPC","Issuance Expected","Expected review","Final Issuance Expected"]
-    all_dates = df[date_cols].values.ravel()
-    valid_dates = pd.Series(all_dates).dropna()
-    if valid_dates.empty:
-        st.error("No valid milestone dates found.")
-        return
+        final_actual = actual_cum[-1]
+        final_expected = expected_cum[-1]
 
-    start_date = valid_dates.min()
-    today_date = pd.to_datetime("2025-08-15").normalize()  # Hardcoded to match the scenario date
-    total_mh = df["Man Hours "].sum()
-
-    # --------------------------
-    # 3) BUILD TIMELINES
-    # --------------------------
-    actual_timeline = pd.date_range(start=start_date, end=today_date, freq='W')
-    expected_timeline = pd.date_range(start=start_date, end=ift_expected_max, freq='W')
-
-    # --------------------------
-    # 4) BUILD ACTUAL AND EXPECTED CUMULATIVE VALUES
-    # --------------------------
-    actual_cum = []
-    last_actual_value = 0.0
-    last_progress_date = start_date
-    
-    for current_date in actual_timeline:
-        a_sum = 0.0
-        has_progress = False
-        for _, row in df.iterrows():
-            mh = row["Man Hours "]
-            a_val = 0.0
-            if pd.notna(row["Issued by EPC"]) and row["Issued by EPC"] <= current_date:
-                a_val += IFR_WEIGHT
-            if pd.notna(row["Review By OE"]) and row["Review By OE"] <= current_date:
-                a_val += IFA_WEIGHT
-            if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= current_date:
-                a_val += IFT_WEIGHT
-            if a_val > 0:
-                has_progress = True
-            a_sum += mh * a_val
-        if has_progress:
-            last_actual_value = a_sum
-            last_progress_date = current_date
-            actual_cum.append(a_sum)
+        # --------------------------
+        # 5) PROJECTED RECOVERY LINE
+        # --------------------------
+        if today_date <= actual_timeline[0]:
+            today_idx = 0
+        elif today_date >= actual_timeline[-1]:
+            today_idx = len(actual_timeline) - 1
         else:
-            actual_cum.append(last_actual_value)
-    
-    if last_progress_date < today_date:
-        actual_timeline = list(actual_timeline) + [today_date]
-        actual_cum = actual_cum + [last_actual_value]
+            today_idx = np.searchsorted(actual_timeline, today_date, side="right") - 1
 
-    expected_cum = []
-    last_expected_value = 0.0
-    last_expected_progress_date = start_date
-    
-    for current_date in expected_timeline:
-        e_sum = 0.0
-        has_progress = False
-        for _, row in df.iterrows():
-            mh = row["Man Hours "]
-            e_val = 0.0
-            if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= current_date:
-                e_val += IFR_WEIGHT
-            if pd.notna(row["Expected review"]) and row["Expected review"] <= current_date:
-                e_val += IFA_WEIGHT
-            if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= current_date:
-                e_val += IFT_WEIGHT
-            if e_val > 0:
-                has_progress = True
-            e_sum += mh * e_val
-        if has_progress:
-            last_expected_value = e_sum
-            last_expected_progress_date = current_date
-            expected_cum.append(e_sum)
+        actual_today = actual_cum[today_idx]
+        if today_date <= expected_timeline[0]:
+            expected_today_idx = 0
+        elif today_date >= expected_timeline[-1]:
+            expected_today_idx = len(expected_timeline) - 1
         else:
-            expected_cum.append(last_expected_value)
-    
-    if pd.notna(ift_expected_max) and last_expected_progress_date < ift_expected_max:
-        expected_timeline = list(expected_timeline) + [ift_expected_max]
-        expected_cum = expected_cum + [last_expected_value]
+            expected_today_idx = np.searchsorted(expected_timeline, today_date, side="right") - 1
+        expected_today = expected_cum[expected_today_idx]
 
-    final_actual = actual_cum[-1]
-    final_expected = expected_cum[-1]
+        gap_hrs = final_expected - actual_today
+        projected_timeline = []
+        projected_cumulative = []
+        recovery_end_date = None
 
-    # --------------------------
-    # 5) PROJECTED RECOVERY LINE
-    # --------------------------
-    if today_date <= actual_timeline[0]:
-        today_idx = 0
-    elif today_date >= actual_timeline[-1]:
-        today_idx = len(actual_timeline) - 1
-    else:
-        today_idx = np.searchsorted(actual_timeline, today_date, side="right") - 1
+        if gap_hrs > 0:
+            total_days_span = (ift_expected_max - start_date).days
+            project_months = total_days_span / 30.4
+            delay_fraction = gap_hrs / final_expected
+            T_recover_months = project_months * delay_fraction * RECOVERY_FACTOR
+            T_recover_weeks = T_recover_months * (30.4 / 7.0)
+            if T_recover_weeks < 1:
+                T_recover_weeks = 1
+            slope_new = gap_hrs / T_recover_weeks
+            last_date = today_date
+            cum_val = actual_today
+            steps = int(T_recover_weeks) + 2
+            for _ in range(steps):
+                projected_timeline.append(last_date)
+                projected_cumulative.append(cum_val)
+                if cum_val >= final_expected:
+                    break
+                last_date = last_date + dt.timedelta(weeks=1)
+                cum_val = min(final_expected, cum_val + slope_new)
+            recovery_end_date = last_date
 
-    actual_today = actual_cum[today_idx]
-    if today_date <= expected_timeline[0]:
-        expected_today_idx = 0
-    elif today_date >= expected_timeline[-1]:
-        expected_today_idx = len(expected_timeline) - 1
-    else:
-        expected_today_idx = np.searchsorted(expected_timeline, today_date, side="right") - 1
-    expected_today = expected_cum[expected_today_idx]
+        # --------------------------
+        # 6) S-CURVE
+        # --------------------------
+        st.subheader("S-Curve with Delay Recovery")
+        y_actual = [x/total_mh*100 for x in actual_cum] if PERCENTAGE_VIEW else actual_cum
+        y_expected = [x/total_mh*100 for x in expected_cum] if PERCENTAGE_VIEW else expected_cum
+        y_projected = [x/total_mh*100 for x in projected_cumulative] if PERCENTAGE_VIEW and projected_cumulative else projected_cumulative
+        y_label = "Cumulative % of Total Works" if PERCENTAGE_VIEW else "Cumulative Man-Hours"
 
-    gap_hrs = final_expected - actual_today
-    projected_timeline = []
-    projected_cumulative = []
-    recovery_end_date = None
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(actual_timeline, y_actual, label="Actual Progress", color=actual_color, linewidth=2)
+        ax.plot(expected_timeline, y_expected, label="Expected Progress", color=expected_color, linewidth=2)
 
-    if gap_hrs > 0:
-        total_days_span = (ift_expected_max - start_date).days
-        project_months = total_days_span / 30.4
-        delay_fraction = gap_hrs / final_expected
-        T_recover_months = project_months * delay_fraction * RECOVERY_FACTOR
-        T_recover_weeks = T_recover_months * (30.4 / 7.0)
-        if T_recover_weeks < 1:
-            T_recover_weeks = 1
-        slope_new = gap_hrs / T_recover_weeks
-        last_date = today_date
-        cum_val = actual_today
-        steps = int(T_recover_weeks) + 2
-        for _ in range(steps):
-            projected_timeline.append(last_date)
-            projected_cumulative.append(cum_val)
-            if cum_val >= final_expected:
-                break
-            last_date = last_date + dt.timedelta(weeks=1)
-            cum_val = min(final_expected, cum_val + slope_new)
-        recovery_end_date = last_date
+        if last_progress_date < today_date:
+            ax.hlines(y=y_actual[-1], xmin=last_progress_date, xmax=today_date, 
+                     color=actual_color, linestyle='-', linewidth=2)
+        
+        if pd.notna(ift_expected_max) and last_expected_progress_date < ift_expected_max:
+            ax.hlines(y=y_expected[-1], xmin=last_expected_progress_date, xmax=ift_expected_max, 
+                     color=expected_color, linestyle='-', linewidth=2)
 
-    # --------------------------
-    # 6) S-CURVE
-    # --------------------------
-    st.subheader("S-Curve with Delay Recovery")
-    y_actual = [x/total_mh*100 for x in actual_cum] if PERCENTAGE_VIEW else actual_cum
-    y_expected = [x/total_mh*100 for x in expected_cum] if PERCENTAGE_VIEW else expected_cum
-    y_projected = [x/total_mh*100 for x in projected_cumulative] if PERCENTAGE_VIEW and projected_cumulative else projected_cumulative
-    y_label = "Cumulative % of Total Works" if PERCENTAGE_VIEW else "Cumulative Man-Hours"
+        if projected_timeline:
+            ax.plot(
+                projected_timeline, y_projected, linestyle=":", label="Projected (Recovery Factor)",
+                color=projected_color, linewidth=3
+            )
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(actual_timeline, y_actual, label="Actual Progress", color=actual_color, linewidth=2)
-    ax.plot(expected_timeline, y_expected, label="Expected Progress", color=expected_color, linewidth=2)
+        ax.set_title("S-Curve with Delay Recovery", fontsize=12)
+        ax.set_xlabel("Date", fontsize=10)
+        ax.set_ylabel(y_label, fontsize=10)
+        if show_grid:
+            ax.grid(True)
+        ax.legend(fontsize=9)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b-%Y"))
+        plt.xticks(rotation=45)
+        plt.tight_layout()
 
-    if last_progress_date < today_date:
-        ax.hlines(y=y_actual[-1], xmin=last_progress_date, xmax=today_date, 
-                 color=actual_color, linestyle='-', linewidth=2)
-    
-    if pd.notna(ift_expected_max) and last_expected_progress_date < ift_expected_max:
-        ax.hlines(y=y_expected[-1], xmin=last_expected_progress_date, xmax=ift_expected_max, 
-                 color=expected_color, linestyle='-', linewidth=2)
-
-    if projected_timeline:
-        ax.plot(
-            projected_timeline, y_projected, linestyle=":", label="Projected (Recovery Factor)",
-            color=projected_color, linewidth=3
-        )
-
-    ax.set_title("S-Curve with Delay Recovery", fontsize=12)
-    ax.set_xlabel("Date", fontsize=10)
-    ax.set_ylabel(y_label, fontsize=10)
-    if show_grid:
-        ax.grid(True)
-    ax.legend(fontsize=9)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b-%Y"))
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-
-    ax.axvline(today_date, color=today_color, linestyle="--", linewidth=1.5, label="Today")
-    ax.annotate(
-        f"Today\n{today_date.strftime('%d-%b-%Y')}",
-        xy=(today_date, (y_expected[-1] if PERCENTAGE_VIEW else final_expected) * 0.1),
-        xytext=(10, 10), textcoords="offset points", color=today_color,
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7), fontsize=8
-    )
-
-    if pd.notna(ift_expected_max):
-        ax.axvline(ift_expected_max, linestyle="--", linewidth=1.5, color=end_date_color)
+        ax.axvline(today_date, color=today_color, linestyle="--", linewidth=1.5, label="Today")
         ax.annotate(
-            f"Original End\n{ift_expected_max.strftime('%d-%b-%Y')}",
-            xy=(ift_expected_max, (y_expected[-1] if PERCENTAGE_VIEW else final_expected) * 0.2),
-            xytext=(-100, 10), textcoords="offset points", color=end_date_color,
-            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
-            fontsize=8, arrowprops=dict(arrowstyle="->", color=end_date_color)
+            f"Today\n{today_date.strftime('%d-%b-%Y')}",
+            xy=(today_date, (y_expected[-1] if PERCENTAGE_VIEW else final_expected) * 0.1),
+            xytext=(10, 10), textcoords="offset points", color=today_color,
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7), fontsize=8
         )
 
-    if recovery_end_date:
-        ax.axvline(recovery_end_date, linestyle="--", linewidth=1.5, color=end_date_color)
+        if pd.notna(ift_expected_max):
+            ax.axvline(ift_expected_max, linestyle="--", linewidth=1.5, color=end_date_color)
+            ax.annotate(
+                f"Original End\n{ift_expected_max.strftime('%d-%b-%Y')}",
+                xy=(ift_expected_max, (y_expected[-1] if PERCENTAGE_VIEW else final_expected) * 0.2),
+                xytext=(-100, 10), textcoords="offset points", color=end_date_color,
+                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
+                fontsize=8, arrowprops=dict(arrowstyle="->", color=end_date_color)
+            )
+
+        if recovery_end_date:
+            ax.axvline(recovery_end_date, linestyle="--", linewidth=1.5, color=end_date_color)
+            ax.annotate(
+                f"Recovery End\n{recovery_end_date.strftime('%d-%b-%Y')}",
+                xy=(recovery_end_date, (y_expected[-1] if PERCENTAGE_VIEW else final_expected) * 0.3),
+                xytext=(10, 10), textcoords="offset points", color=end_date_color,
+                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
+                fontsize=8, arrowprops=dict(arrowstyle="->", color=end_date_color)
+            )
+
+        delay_today = expected_today - actual_today
+        delay_pct = delay_today/final_expected*100 if final_expected > 0 else 0
+        delay_text = f"Current Delay: {delay_pct:.1f}%" if PERCENTAGE_VIEW else f"Current Delay: {delay_today:,.1f} MH\n({delay_pct:.1f}%)"
+        
         ax.annotate(
-            f"Recovery End\n{recovery_end_date.strftime('%d-%b-%Y')}",
-            xy=(recovery_end_date, (y_expected[-1] if PERCENTAGE_VIEW else final_expected) * 0.3),
-            xytext=(10, 10), textcoords="offset points", color=end_date_color,
+            delay_text, xy=(today_date, (y_actual[today_idx] + y_expected[expected_today_idx])/2),
+            xytext=(10, -50), textcoords="offset points", color=today_color,
             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
-            fontsize=8, arrowprops=dict(arrowstyle="->", color=end_date_color)
+            arrowprops=dict(arrowstyle="->", color=today_color), ha="left", fontsize=8
         )
 
-    delay_today = expected_today - actual_today
-    delay_pct = delay_today/final_expected*100 if final_expected > 0 else 0
-    delay_text = f"Current Delay: {delay_pct:.1f}%" if PERCENTAGE_VIEW else f"Current Delay: {delay_today:,.1f} MH\n({delay_pct:.1f}%)"
-    
-    ax.annotate(
-        delay_text, xy=(today_date, (y_actual[today_idx] + y_expected[expected_today_idx])/2),
-        xytext=(10, -50), textcoords="offset points", color=today_color,
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
-        arrowprops=dict(arrowstyle="->", color=today_color), ha="left", fontsize=8
-    )
+        st.pyplot(fig)
 
-    st.pyplot(fig)
-
-    # --------------------------
-    # 7) COLOR SCHEME FOR OTHER CHARTS
-    # --------------------------
-    standard_cycler = plt.rcParamsDefault['axes.prop_cycle']
-    blue_cycler = cycler(color=["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff"])
-    green_cycler = cycler(color=["#ccffcc", "#99ff99", "#66ff66", "#33cc33", "#009900"])
-    
-    if color_scheme == "Standard":
-        plt.rc("axes", prop_cycle=standard_cycler)
-    elif color_scheme == "Shades of Blue":
-        plt.rc("axes", prop_cycle=blue_cycler)
-    elif color_scheme == "Shades of Green":
-        plt.rc("axes", prop_cycle=green_cycler)
-    else:
-        palette_colors = sns.color_palette(seaborn_palette, n_colors=10)
-        palette_cycler = cycler(color=palette_colors)
-        plt.rc("axes", prop_cycle=palette_cycler)
-
-    # --------------------------
-    # 8) ACTUAL vs EXPECTED HOURS BY DISCIPLINE
-    # --------------------------
-    end_date = max(today_date, ift_expected_max)
-    final_actual_progress = []
-    final_expected_progress = []
-    for _, row in df.iterrows():
-        a_prog = 0.0
-        if pd.notna(row["Issued by EPC"]) and row["Issued by EPC"] <= end_date:
-            a_prog += IFR_WEIGHT
-        if pd.notna(row["Review By OE"]) and row["Review By OE"] <= end_date:
-            a_prog += IFA_WEIGHT
-        if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= end_date:
-            a_prog += IFT_WEIGHT
-        e_prog = 0.0
-        if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= end_date:
-            e_prog += IFR_WEIGHT
-        if pd.notna(row["Expected review"]) and row["Expected review"] <= end_date:
-            e_prog += IFA_WEIGHT
-        if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= end_date:
-            e_prog += IFT_WEIGHT
-        final_actual_progress.append(row["Man Hours "] * a_prog)
-        final_expected_progress.append(row["Man Hours "] * e_prog)
-
-    df["Actual_Progress_At_Final"] = final_actual_progress
-    df["Expected_Progress_At_Final"] = final_expected_progress
-
-    by_disc = df.groupby("Discipline")[["Actual_Progress_At_Final","Expected_Progress_At_Final"]].sum()
-    
-    if PERCENTAGE_VIEW:
-        by_disc["Actual_Progress_At_Final"] = by_disc["Actual_Progress_At_Final"] / total_mh * 100
-        by_disc["Expected_Progress_At_Final"] = by_disc["Expected_Progress_At_Final"] / total_mh * 100
-        y_label = "Percentage of Total Works"
-    else:
-        y_label = "Cumulative Hours"
-
-    st.subheader("Actual vs. Expected Works by Discipline" if PERCENTAGE_VIEW else "Actual vs. Expected Hours by Discipline")
-    fig2, ax2 = plt.subplots(figsize=(8,5))
-    x = range(len(by_disc.index))
-    width = 0.35
-    ax2.bar(
-        [i - width/2 for i in x], by_disc["Actual_Progress_At_Final"],
-        width=width, label='Actual Works' if PERCENTAGE_VIEW else 'Actual Hours'
-    )
-    ax2.bar(
-        [i + width/2 for i in x], by_disc["Expected_Progress_At_Final"],
-        width=width, label='Expected Works' if PERCENTAGE_VIEW else 'Expected Hours'
-    )
-    ax2.set_title("Actual vs. Expected Works by Discipline" if PERCENTAGE_VIEW else "Actual vs. Expected Hours by Discipline", fontsize=10)
-    ax2.set_xlabel("Discipline", fontsize=9)
-    ax2.set_ylabel(y_label, fontsize=9)
-    ax2.set_xticks(ticks=x)
-    ax2.set_xticklabels(by_disc.index, rotation=45, ha='right', fontsize=8)
-    ax2.legend(fontsize=8)
-    if show_grid:
-        ax2.grid(True)
-    plt.tight_layout()
-    st.pyplot(fig2)
-
-    # --------------------------
-    # 9) TWO DONUT CHARTS SIDE BY SIDE
-    # --------------------------
-    total_actual = df["Actual_Progress_At_Final"].sum()
-    overall_pct = total_actual / total_mh if total_mh > 0 else 0
-    ifr_delivered = df["Issued by EPC"].notna().sum()
-    total_docs = len(df)
-    ifr_values = [ifr_delivered, total_docs - ifr_delivered]
-
-    st.subheader("Donut Charts")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("**Total Project Completion**")
-        fig3, ax3 = plt.subplots(figsize=(4,4))
-        ax3.pie(
-            [overall_pct, 1 - overall_pct], labels=["Completed", "Remaining"],
-            autopct="%1.1f%%", startangle=140, wedgeprops={"width":0.4}
-        )
-        ax3.set_title("Project Completion", fontsize=9)
-        st.pyplot(fig3)
-    with col2:
-        st.write("**Issued By EPC Status**")
-        def ifr_autopct(pct):
-            total_count = sum(ifr_values)
-            docs = int(round(pct * total_count / 100.0))
-            return f"{docs} docs" if docs > 0 else ""
-        fig_ifr, ax_ifr = plt.subplots(figsize=(4,4))
-        ax_ifr.pie(
-            ifr_values, labels=["Issued by EPC", "Not Yet Issued"],
-            autopct=ifr_autopct, startangle=140, wedgeprops={"width":0.4}
-        )
-        ax_ifr.set_title("Issued By EPC Status", fontsize=9)
-        st.pyplot(fig_ifr)
-
-    # --------------------------
-    # 10) NESTED PIE CHART FOR DISCIPLINE
-    # --------------------------
-    st.subheader("Nested Pie Chart: Document Completion by Discipline")
-    def get_doc_status(row):
-        if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
-            return "Completed"
-        else:
-            return "Incomplete"
-    df["Doc_Status"] = df.apply(get_doc_status, axis=1)
-    disc_counts = df.groupby("Discipline").size()
-    if disc_counts.empty:
-        st.warning("No Discipline data available for pie chart.")
-    else:
-        fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(10, 10))
-        outer_labels = disc_counts.index
-        outer_sizes = disc_counts.values
-        n_disciplines = len(outer_labels)
+        # --------------------------
+        # 7) COLOR SCHEME FOR OTHER CHARTS
+        # --------------------------
+        standard_cycler = plt.rcParamsDefault['axes.prop_cycle']
+        blue_cycler = cycler(color=["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff"])
+        green_cycler = cycler(color=["#ccffcc", "#99ff99", "#66ff66", "#33cc33", "#009900"])
+        
         if color_scheme == "Standard":
-            outer_colors = [c['color'] for c in plt.rcParamsDefault['axes.prop_cycle']][:n_disciplines]
+            plt.rc("axes", prop_cycle=standard_cycler)
         elif color_scheme == "Shades of Blue":
-            outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff"][:n_disciplines]
-            if n_disciplines > 5:
-                outer_colors = sns.color_palette("Blues", n_colors=n_disciplines)
+            plt.rc("axes", prop_cycle=blue_cycler)
         elif color_scheme == "Shades of Green":
-            outer_colors = ["#ccffcc", "#99ff99", "#66ff66", "#33cc33", "#009900"][:n_disciplines]
-            if n_disciplines > 5:
-                outer_colors = sns.color_palette("Greens", n_colors=n_disciplines)
+            plt.rc("axes", prop_cycle=green_cycler)
         else:
-            outer_colors = sns.color_palette(seaborn_palette, n_colors=n_disciplines)
-        inner_sizes = []
-        inner_colors = []
-        status_colors = {"Completed": "#808080", "Incomplete": "#F0F0F0"}
-        for disc in disc_counts.index:
-            disc_docs = df[df["Discipline"] == disc]
-            for _, row in disc_docs.iterrows():
-                inner_sizes.append(1)
-                inner_colors.append(status_colors[row["Doc_Status"]])
-        if not inner_sizes or sum(inner_sizes) == 0:
-            st.warning("No valid data for inner pie chart (Discipline). All counts are zero or empty.")
+            palette_colors = sns.color_palette(seaborn_palette, n_colors=10)
+            palette_cycler = cycler(color=palette_colors)
+            plt.rc("axes", prop_cycle=palette_cycler)
+
+        # --------------------------
+        # 8) ACTUAL vs EXPECTED HOURS BY DISCIPLINE
+        # --------------------------
+        end_date = max(today_date, ift_expected_max)
+        final_actual_progress = []
+        final_expected_progress = []
+        for _, row in df.iterrows():
+            a_prog = 0.0
+            if pd.notna(row["Issued by EPC"]) and row["Issued by EPC"] <= end_date:
+                a_prog += IFR_WEIGHT
+            if pd.notna(row["Review By OE"]) and row["Review By OE"] <= end_date:
+                a_prog += IFA_WEIGHT
+            if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= end_date:
+                a_prog += IFT_WEIGHT
+            e_prog = 0.0
+            if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= end_date:
+                e_prog += IFR_WEIGHT
+            if pd.notna(row["Expected review"]) and row["Expected review"] <= end_date:
+                e_prog += IFA_WEIGHT
+            if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= end_date:
+                e_prog += IFT_WEIGHT
+            final_actual_progress.append(row["Man Hours "] * a_prog)
+            final_expected_progress.append(row["Man Hours "] * e_prog)
+
+        df["Actual_Progress_At_Final"] = final_actual_progress
+        df["Expected_Progress_At_Final"] = final_expected_progress
+
+        by_disc = df.groupby("Discipline")[["Actual_Progress_At_Final","Expected_Progress_At_Final"]].sum()
+        
+        if PERCENTAGE_VIEW:
+            by_disc["Actual_Progress_At_Final"] = by_disc["Actual_Progress_At_Final"] / total_mh * 100
+            by_disc["Expected_Progress_At_Final"] = by_disc["Expected_Progress_At_Final"] / total_mh * 100
+            y_label = "Percentage of Total Works"
         else:
-            outer_wedges, outer_texts = ax_nested_disc.pie(
-                outer_sizes, radius=1.0, labels=None, startangle=90,
-                wedgeprops=dict(width=0.3, edgecolor='w'), colors=outer_colors
-            )
-            for i, (wedge, label, count) in enumerate(zip(outer_wedges, outer_labels, outer_sizes)):
-                angle = (wedge.theta2 - wedge.theta1)/2. + wedge.theta1
-                x = 1.1 * np.cos(np.deg2rad(angle))
-                y = 1.1 * np.sin(np.deg2rad(angle))
-                horizontalalignment = {-1: "right", 1: "left"}.get(np.sign(x), "center")
-                ax_nested_disc.annotate(
-                    label, xy=(x, y), xytext=(1.5*np.sign(x), 0), textcoords='offset points',
-                    ha=horizontalalignment, va='center', fontsize=8, fontweight='normal'
-                )
-                ax_nested_disc.annotate(
-                    f"({count})", xy=(x, y), xytext=(1.5*np.sign(x), -15), textcoords='offset points',
-                    ha=horizontalalignment, va='center', fontsize=10, fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8)
-                )
-            try:
-                inner_wedges = ax_nested_disc.pie(
-                    inner_sizes, radius=0.7, startangle=90, wedgeprops=dict(width=0.3, edgecolor='w'),
-                    colors=inner_colors
-                )[0]
-            except ValueError as e:
-                st.error(f"Error plotting inner pie chart (Discipline): {str(e)}")
-                plt.close(fig_nested_disc)
-                st.stop()
-            from matplotlib.patches import Patch
-            status_patches = [
-                Patch(color=status_colors["Completed"], label="Completed"),
-                Patch(color=status_colors["Incomplete"], label="Incomplete")
-            ]
-            ax_nested_disc.legend(
-                handles=status_patches, title="Status", loc="center left",
-                bbox_to_anchor=(1, 0.5), fontsize=8
-            )
-            ax_nested_disc.set_title("Documents by Discipline and Completion", fontsize=10)
-            plt.tight_layout()
-            st.pyplot(fig_nested_disc)
+            y_label = "Cumulative Hours"
 
-    # --------------------------
-    # 11) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
-    # --------------------------
-    df["Issued_bool"] = df["Issued by EPC"].notna().astype(int)
-    df["Review_bool"] = df["Review By OE"].notna().astype(int)
-    df["Reply_bool"] = df["Reply By EPC"].notna().astype(int)
-    disc_counts = df.groupby("Discipline")[["Issued_bool","Review_bool","Reply_bool"]].sum()
-    st.subheader("Number of Docs with Issued, Review, Reply by Discipline")
-    fig4, ax4 = plt.subplots(figsize=(8,5))
-    disc_counts.plot(kind="barh", stacked=True, ax=ax4)
-    ax4.set_xlabel("Count of Documents", fontsize=9)
-    ax4.set_ylabel("Discipline", fontsize=9)
-    ax4.set_title("Document Milestone Status by Discipline", fontsize=10)
-    ax4.legend(labels=["Issued", "Review", "Reply"], fontsize=8)
-    plt.xticks(fontsize=8)
-    plt.yticks(fontsize=8)
-    if show_grid:
-        ax4.grid(True)
-    plt.tight_layout()
-    for container in ax4.containers:
-        ax4.bar_label(container, label_type='center', fontsize=8)
-    st.pyplot(fig4)
-
-    # --------------------------
-    # 12) DELAY BY DISCIPLINE (AS OF TODAY)
-    # --------------------------
-    st.subheader("Delay Percentage by Discipline (As of Today)")
-    actual_prog_today = []
-    expected_prog_today = []
-    for _, row in df.iterrows():
-        a_val = 0.0
-        if pd.notna(row["Issued by EPC"]) and row["Issued by EPC"] <= today_date:
-            a_val += IFR_WEIGHT
-        if pd.notna(row["Review By OE"]) and row["Review By OE"] <= today_date:
-            a_val += IFA_WEIGHT
-        if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= today_date:
-            a_val += IFT_WEIGHT
-        e_val = 0.0
-        if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= today_date:
-            e_val += IFR_WEIGHT
-        if pd.notna(row["Expected review"]) and row["Expected review"] <= today_date:
-            e_val += IFA_WEIGHT
-        if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= today_date:
-            e_val += IFT_WEIGHT
-        actual_prog_today.append(row["Man Hours "] * a_val)
-        expected_prog_today.append(row["Man Hours "] * e_val)
-    df["Actual_Progress_Today"] = actual_prog_today
-    df["Expected_Progress_Today"] = expected_prog_today
-    disc_delay = df.groupby("Discipline")[["Actual_Progress_Today","Expected_Progress_Today"]].sum()
-    disc_delay["Delay_%"] = (
-        (disc_delay["Expected_Progress_Today"] - disc_delay["Actual_Progress_Today"])
-        / disc_delay["Expected_Progress_Today"]
-    ) * 100
-    disc_delay["Delay_%"] = disc_delay["Delay_%"].fillna(0)
-    fig_delay, ax_delay = plt.subplots(figsize=(8,5))
-    ax_delay.bar(disc_delay.index, disc_delay["Delay_%"])
-    ax_delay.set_title("Delay in % by Discipline (Today)", fontsize=10)
-    ax_delay.set_xlabel("Discipline", fontsize=9)
-    ax_delay.set_ylabel("Delay (%)", fontsize=9)
-    ax_delay.set_xticks(range(len(disc_delay.index)))
-    ax_delay.set_xticklabels(disc_delay.index, rotation=45, ha='right', fontsize=8)
-    if show_grid:
-        ax_delay.grid(True)
-    plt.tight_layout()
-    st.pyplot(fig_delay)
-    st.write("Detailed Delay Data:")
-    st.dataframe(disc_delay)
-
-    # --------------------------
-    # 13) FINAL MILESTONE + STATUS STACKED BAR
-    # --------------------------
-    def get_final_milestone(row):
-        if pd.notna(row["Reply By EPC"]):
-            return "Reply By EPC"
-        elif pd.notna(row["Review By OE"]):
-            return "Review By OE"
-        elif pd.notna(row["Issued by EPC"]):
-            return "Issued by EPC"
-        else:
-            return "NO ISSUANCE"
-    df["FinalMilestone"] = df.apply(get_final_milestone, axis=1)
-    st.subheader("Documents by Final Milestone (Stacked by Status)")
-    group_df = (
-        df.groupby(["FinalMilestone","Status"])["ID"]
-          .count()
-          .reset_index(name="Count")
-    )
-    pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
-    pivoted = pivoted.reindex(["Issued by EPC","Review By OE","Reply By EPC"]).dropna(how="all")
-    fig_status, ax_status = plt.subplots(figsize=(7,5))
-    pivoted.plot(kind="bar", stacked=True, ax=ax_status)
-    for container in ax_status.containers:
-        ax_status.bar_label(
-            container, label_type='center', fmt='%d', fontsize=8, color='white'
+        st.subheader("Actual vs. Expected Works by Discipline" if PERCENTAGE_VIEW else "Actual vs. Expected Hours by Discipline")
+        fig2, ax2 = plt.subplots(figsize=(8,5))
+        x = range(len(by_disc.index))
+        width = 0.35
+        ax2.bar(
+            [i - width/2 for i in x], by_disc["Actual_Progress_At_Final"],
+            width=width, label='Actual Works' if PERCENTAGE_VIEW else 'Actual Hours'
         )
-    ax_status.set_title("Documents by Final Milestone (Stacked by Status)", fontsize=10)
-    ax_status.set_xlabel("Final Milestone", fontsize=9)
-    ax_status.set_ylabel("Number of Documents", fontsize=9)
-    ax_status.set_xticks(range(len(pivoted.index)))
-    ax_status.set_xticklabels(pivoted.index, rotation=45, ha='right', fontsize=8)
-    ax_status.legend(title="Status", fontsize=8)
-    if show_grid:
-        ax_status.grid(True)
-    plt.tight_layout()
-    st.pyplot(fig_status)
+        ax2.bar(
+            [i + width/2 for i in x], by_disc["Expected_Progress_At_Final"],
+            width=width, label='Expected Works' if PERCENTAGE_VIEW else 'Expected Hours'
+        )
+        ax2.set_title("Actual vs. Expected Works by Discipline" if PERCENTAGE_VIEW else "Actual vs. Expected Hours by Discipline", fontsize=10)
+        ax2.set_xlabel("Discipline", fontsize=9)
+        ax2.set_ylabel(y_label, fontsize=9)
+        ax2.set_xticks(ticks=x)
+        ax2.set_xticklabels(by_disc.index, rotation=45, ha='right', fontsize=8)
+        ax2.legend(fontsize=8)
+        if show_grid:
+            ax2.grid(True)
+        plt.tight_layout()
+        st.pyplot(fig2)
 
-    # --------------------------
-    # --------------------------
-    # 13.5) SIMPLIFIED DELAY TABLE FOR ISSUED BY EPC
-    # --------------------------
-    st.subheader("Document Delays (Issued by EPC vs Expected Issuance)")
-    
-    # Calculate IFR delay (Issued by EPC vs Issuance Expected)
-    today = pd.Timestamp.today().normalize()
-    delays = []
-    for i, row in df.iterrows():
-        expected = row["Issuance Expected"]
-        actual = row["Issued by EPC"] if pd.notna(row["Issued by EPC"]) else today
-        
-        if pd.isna(expected):
-            delays.append(0)
-        else:
-            delay_days = (actual - expected).days
-            # Only show positive delays (when actual is later than expected)
-            delays.append(max(0, delay_days))
-    
-    # Create display table
-    display_data = {
-        "ID": df["ID"],
-        "Discipline": df["Discipline"],
-        "Document Title": df["Document Title"],
-        "Issuance Expected": df["Issuance Expected"].dt.strftime("%d-%b-%y"),
-        "Actual Issued": df["Issued by EPC"].apply(
-            lambda x: x.strftime("%d-%b-%y") if pd.notna(x) else "Not Issued"
-        ),
-        "Delay (days)": delays
-    }
-    df_display = pd.DataFrame(display_data)
-    
-    # Function to apply color formatting
-    def color_delay(val):
-        if val == 0:
-            return 'background-color: #e9f7ef'  # Light green for on-time
-        else:
-            # Use a fixed light red for any delay
-            return 'background-color: #ffcccc'
-    
-    # Apply styling
-    styler = df_display.style.applymap(color_delay, subset=['Delay (days)'])
-    
-    # Display styled table
-    st.dataframe(styler, use_container_width=True)
-    
-    # Excel export with formatting using openpyxl
-    def export_to_excel():
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_display.to_excel(writer, sheet_name='Delays', index=False)
-            
-            # Access the workbook and worksheet
-            workbook = writer.book
-            worksheet = writer.sheets['Delays']
-            
-            # Define fill colors
-            green_fill = PatternFill(start_color="e9f7ef", end_color="e9f7ef", fill_type="solid")
-            red_fill = PatternFill(start_color="ffcccc", end_color="ffcccc", fill_type="solid")
-            
-            # Apply formatting to delay column (column F)
-            for idx, row in enumerate(worksheet.iter_rows(min_row=2, min_col=6, max_col=6), start=2):
-                for cell in row:
-                    delay_val = cell.value
-                    if delay_val == 0:
-                        cell.fill = green_fill
-                    else:
-                        cell.fill = red_fill
-                        
-            # Apply header styling
-            header_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
-            for cell in worksheet[1]:
-                cell.fill = header_fill
-        
-        return output.getvalue()
-    
-    excel_data = export_to_excel()
-    st.download_button(
-        label="Download Delays Table (Excel)",
-        data=excel_data,
-        file_name="document_delays.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        # --------------------------
+        # 9) TWO DONUT CHARTS SIDE BY SIDE
+        # --------------------------
+        total_actual = df["Actual_Progress_At_Final"].sum()
+        overall_pct = total_actual / total_mh if total_mh > 0 else 0
+        ifr_delivered = df["Issued by EPC"].notna().sum()
+        total_docs = len(df)
+        ifr_values = [ifr_delivered, total_docs - ifr_delivered]
 
-    # --------------------------
-    # 14) SAVE UPDATED CSV
-    # --------------------------
-    df["Issuance Expected"] = pd.to_datetime(df["Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
-    df["Expected review"] = pd.to_datetime(df["Expected review"], errors="coerce").dt.strftime("%d-%b-%y")
-    df["Final Issuance Expected"] = pd.to_datetime(df["Final Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
-    st.subheader("Download Updated CSV")
-    st.download_button(
-        label="Download Updated CSV",
-        data=df.to_csv(index=False).encode('utf-8'),
-        file_name="EDDR_with_calculated_expected.csv",
-        mime="text/csv"
-    )
+        st.subheader("Donut Charts")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**Total Project Completion**")
+            fig3, ax3 = plt.subplots(figsize=(4,4))
+            ax3.pie(
+                [overall_pct, 1 - overall_pct], labels=["Completed", "Remaining"],
+                autopct="%1.1f%%", startangle=140, wedgeprops={"width":0.4}
+            )
+            ax3.set_title("Project Completion", fontsize=9)
+            st.pyplot(fig3)
+        with col2:
+            st.write("**Issued By EPC Status**")
+            def ifr_autopct(pct):
+                total_count = sum(ifr_values)
+                docs = int(round(pct * total_count / 100.0))
+                return f"{docs} docs" if docs > 0 else ""
+            fig_ifr, ax_ifr = plt.subplots(figsize=(4,4))
+            ax_ifr.pie(
+                ifr_values, labels=["Issued by EPC", "Not Yet Issued"],
+                autopct=ifr_autopct, startangle=140, wedgeprops={"width":0.4}
+            )
+            ax_ifr.set_title("Issued By EPC Status", fontsize=9)
+            st.pyplot(fig_ifr)
+
+        # --------------------------
+        # 10) NESTED PIE CHART FOR DISCIPLINE
+        # --------------------------
+        st.subheader("Nested Pie Chart: Document Completion by Discipline")
+        def get_doc_status(row):
+            if pd.notna(row["Reply By EPC"]) and row["Flag"] == 1:
+                return "Completed"
+            else:
+                return "Incomplete"
+        df["Doc_Status"] = df.apply(get_doc_status, axis=1)
+        disc_counts = df.groupby("Discipline").size()
+        if disc_counts.empty:
+            st.warning("No Discipline data available for pie chart.")
+        else:
+            fig_nested_disc, ax_nested_disc = plt.subplots(figsize=(10, 10))
+            outer_labels = disc_counts.index
+            outer_sizes = disc_counts.values
+            n_disciplines = len(outer_labels)
+            if color_scheme == "Standard":
+                outer_colors = [c['color'] for c in plt.rcParamsDefault['axes.prop_cycle']][:n_disciplines]
+            elif color_scheme == "Shades of Blue":
+                outer_colors = ["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff"][:n_disciplines]
+                if n_disciplines > 5:
+                    outer_colors = sns.color_palette("Blues", n_colors=n_disciplines)
+            elif color_scheme == "Shades of Green":
+                outer_colors = ["#ccffcc", "#99ff99", "#66ff66", "#33cc33", "#009900"][:n_disciplines]
+                if n_disciplines > 5:
+                    outer_colors = sns.color_palette("Greens", n_colors=n_disciplines)
+            else:
+                outer_colors = sns.color_palette(seaborn_palette, n_colors=n_disciplines)
+            inner_sizes = []
+            inner_colors = []
+            status_colors = {"Completed": "#808080", "Incomplete": "#F0F0F0"}
+            for disc in disc_counts.index:
+                disc_docs = df[df["Discipline"] == disc]
+                for _, row in disc_docs.iterrows():
+                    inner_sizes.append(1)
+                    inner_colors.append(status_colors[row["Doc_Status"]])
+            if not inner_sizes or sum(inner_sizes) == 0:
+                st.warning("No valid data for inner pie chart (Discipline). All counts are zero or empty.")
+            else:
+                outer_wedges, outer_texts = ax_nested_disc.pie(
+                    outer_sizes, radius=1.0, labels=None, startangle=90,
+                    wedgeprops=dict(width=0.3, edgecolor='w'), colors=outer_colors
+                )
+                for i, (wedge, label, count) in enumerate(zip(outer_wedges, outer_labels, outer_sizes)):
+                    angle = (wedge.theta2 - wedge.theta1)/2. + wedge.theta1
+                    x = 1.1 * np.cos(np.deg2rad(angle))
+                    y = 1.1 * np.sin(np.deg2rad(angle))
+                    horizontalalignment = {-1: "right", 1: "left"}.get(np.sign(x), "center")
+                    ax_nested_disc.annotate(
+                        label, xy=(x, y), xytext=(1.5*np.sign(x), 0), textcoords='offset points',
+                        ha=horizontalalignment, va='center', fontsize=8, fontweight='normal'
+                    )
+                    ax_nested_disc.annotate(
+                        f"({count})", xy=(x, y), xytext=(1.5*np.sign(x), -15), textcoords='offset points',
+                        ha=horizontalalignment, va='center', fontsize=10, fontweight='bold',
+                        bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8)
+                    )
+                try:
+                    inner_wedges = ax_nested_disc.pie(
+                        inner_sizes, radius=0.7, startangle=90, wedgeprops=dict(width=0.3, edgecolor='w'),
+                        colors=inner_colors
+                    )[0]
+                except ValueError as e:
+                    st.error(f"Error plotting inner pie chart (Discipline): {str(e)}")
+                    plt.close(fig_nested_disc)
+                    st.stop()
+                from matplotlib.patches import Patch
+                status_patches = [
+                    Patch(color=status_colors["Completed"], label="Completed"),
+                    Patch(color=status_colors["Incomplete"], label="Incomplete")
+                ]
+                ax_nested_disc.legend(
+                    handles=status_patches, title="Status", loc="center left",
+                    bbox_to_anchor=(1, 0.5), fontsize=8
+                )
+                ax_nested_disc.set_title("Documents by Discipline and Completion", fontsize=10)
+                plt.tight_layout()
+                st.pyplot(fig_nested_disc)
+
+        # --------------------------
+        # 11) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
+        # --------------------------
+        df["Issued_bool"] = df["Issued by EPC"].notna().astype(int)
+        df["Review_bool"] = df["Review By OE"].notna().astype(int)
+        df["Reply_bool"] = df["Reply By EPC"].notna().astype(int)
+        disc_counts = df.groupby("Discipline")[["Issued_bool","Review_bool","Reply_bool"]].sum()
+        st.subheader("Number of Docs with Issued, Review, Reply by Discipline")
+        fig4, ax4 = plt.subplots(figsize=(8,5))
+        disc_counts.plot(kind="barh", stacked=True, ax=ax4)
+        ax4.set_xlabel("Count of Documents", fontsize=9)
+        ax4.set_ylabel("Discipline", fontsize=9)
+        ax4.set_title("Document Milestone Status by Discipline", fontsize=10)
+        ax4.legend(labels=["Issued", "Review", "Reply"], fontsize=8)
+        plt.xticks(fontsize=8)
+        plt.yticks(fontsize=8)
+        if show_grid:
+            ax4.grid(True)
+        plt.tight_layout()
+        for container in ax4.containers:
+            ax4.bar_label(container, label_type='center', fontsize=8)
+        st.pyplot(fig4)
+
+        # --------------------------
+        # 12) DELAY BY DISCIPLINE (AS OF TODAY)
+        # --------------------------
+        st.subheader("Delay Percentage by Discipline (As of Today)")
+        actual_prog_today = []
+        expected_prog_today = []
+        for _, row in df.iterrows():
+            a_val = 0.0
+            if pd.notna(row["Issued by EPC"]) and row["Issued by EPC"] <= today_date:
+                a_val += IFR_WEIGHT
+            if pd.notna(row["Review By OE"]) and row["Review By OE"] <= today_date:
+                a_val += IFA_WEIGHT
+            if pd.notna(row["Reply By EPC"]) and row["Reply By EPC"] <= today_date:
+                a_val += IFT_WEIGHT
+            e_val = 0.0
+            if pd.notna(row["Issuance Expected"]) and row["Issuance Expected"] <= today_date:
+                e_val += IFR_WEIGHT
+            if pd.notna(row["Expected review"]) and row["Expected review"] <= today_date:
+                e_val += IFA_WEIGHT
+            if pd.notna(row["Final Issuance Expected"]) and row["Final Issuance Expected"] <= today_date:
+                e_val += IFT_WEIGHT
+            actual_prog_today.append(row["Man Hours "] * a_val)
+            expected_prog_today.append(row["Man Hours "] * e_val)
+        df["Actual_Progress_Today"] = actual_prog_today
+        df["Expected_Progress_Today"] = expected_prog_today
+        disc_delay = df.groupby("Discipline")[["Actual_Progress_Today","Expected_Progress_Today"]].sum()
+        disc_delay["Delay_%"] = (
+            (disc_delay["Expected_Progress_Today"] - disc_delay["Actual_Progress_Today"])
+            / disc_delay["Expected_Progress_Today"]
+        ) * 100
+        disc_delay["Delay_%"] = disc_delay["Delay_%"].fillna(0)
+        fig_delay, ax_delay = plt.subplots(figsize=(8,5))
+        ax_delay.bar(disc_delay.index, disc_delay["Delay_%"])
+        ax_delay.set_title("Delay in % by Discipline (Today)", fontsize=10)
+        ax_delay.set_xlabel("Discipline", fontsize=9)
+        ax_delay.set_ylabel("Delay (%)", fontsize=9)
+        ax_delay.set_xticks(range(len(disc_delay.index)))
+        ax_delay.set_xticklabels(disc_delay.index, rotation=45, ha='right', fontsize=8)
+        if show_grid:
+            ax_delay.grid(True)
+        plt.tight_layout()
+        st.pyplot(fig_delay)
+        st.write("Detailed Delay Data:")
+        st.dataframe(disc_delay)
+
+        # --------------------------
+        # 13) FINAL MILESTONE + STATUS STACKED BAR
+        # --------------------------
+        def get_final_milestone(row):
+            if pd.notna(row["Reply By EPC"]):
+                return "Reply By EPC"
+            elif pd.notna(row["Review By OE"]):
+                return "Review By OE"
+            elif pd.notna(row["Issued by EPC"]):
+                return "Issued by EPC"
+            else:
+                return "NO ISSUANCE"
+        df["FinalMilestone"] = df.apply(get_final_milestone, axis=1)
+        st.subheader("Documents by Final Milestone (Stacked by Status)")
+        group_df = (
+            df.groupby(["FinalMilestone","Status"])["ID"]
+              .count()
+              .reset_index(name="Count")
+        )
+        pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
+        pivoted = pivoted.reindex(["Issued by EPC","Review By OE","Reply By EPC"]).dropna(how="all")
+        fig_status, ax_status = plt.subplots(figsize=(7,5))
+        pivoted.plot(kind="bar", stacked=True, ax=ax_status)
+        for container in ax_status.containers:
+            ax_status.bar_label(
+                container, label_type='center', fmt='%d', fontsize=8, color='white'
+            )
+        ax_status.set_title("Documents by Final Milestone (Stacked by Status)", fontsize=10)
+        ax_status.set_xlabel("Final Milestone", fontsize=9)
+        ax_status.set_ylabel("Number of Documents", fontsize=9)
+        ax_status.set_xticks(range(len(pivoted.index)))
+        ax_status.set_xticklabels(pivoted.index, rotation=45, ha='right', fontsize=8)
+        ax_status.legend(title="Status", fontsize=8)
+        if show_grid:
+            ax_status.grid(True)
+        plt.tight_layout()
+        st.pyplot(fig_status)
+
+        # --------------------------
+        # 13.5) SIMPLIFIED DELAY TABLE FOR ISSUED BY EPC
+        # --------------------------
+        st.subheader("Document Delays (Issued by EPC vs Expected Issuance)")
+        
+        # Calculate IFR delay (Issued by EPC vs Issuance Expected)
+        today = pd.Timestamp.today().normalize()
+        delays = []
+        for i, row in df.iterrows():
+            expected = row["Issuance Expected"]
+            actual = row["Issued by EPC"] if pd.notna(row["Issued by EPC"]) else today
+            
+            if pd.isna(expected):
+                delays.append(0)
+            else:
+                delay_days = (actual - expected).days
+                # Only show positive delays (when actual is later than expected)
+                delays.append(max(0, delay_days))
+        
+        # Create display table
+        display_data = {
+            "ID": df["ID"],
+            "Discipline": df["Discipline"],
+            "Document Title": df["Document Title"],
+            "Issuance Expected": df["Issuance Expected"].dt.strftime("%d-%b-%y"),
+            "Actual Issued": df["Issued by EPC"].apply(
+                lambda x: x.strftime("%d-%b-%y") if pd.notna(x) else "Not Issued"
+            ),
+            "Delay (days)": delays
+        }
+        df_display = pd.DataFrame(display_data)
+        
+        # Function to apply color formatting
+        def color_delay(val):
+            if val == 0:
+                return 'background-color: #e9f7ef'  # Light green for on-time
+            else:
+                # Use a fixed light red for any delay
+                return 'background-color: #ffcccc'
+        
+        # Apply styling
+        styler = df_display.style.applymap(color_delay, subset=['Delay (days)'])
+        
+        # Display styled table
+        st.dataframe(styler, use_container_width=True)
+        
+        # Excel export with formatting using openpyxl
+        def export_to_excel():
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_display.to_excel(writer, sheet_name='Delays', index=False)
+                
+                # Access the workbook and worksheet
+                workbook = writer.book
+                worksheet = writer.sheets['Delays']
+                
+                # Define fill colors
+                green_fill = PatternFill(start_color="e9f7ef", end_color="e9f7ef", fill_type="solid")
+                red_fill = PatternFill(start_color="ffcccc", end_color="ffcccc", fill_type="solid")
+                
+                # Apply formatting to delay column (column F)
+                for idx, row in enumerate(worksheet.iter_rows(min_row=2, min_col=6, max_col=6), start=2):
+                    for cell in row:
+                        delay_val = cell.value
+                        if delay_val == 0:
+                            cell.fill = green_fill
+                        else:
+                            cell.fill = red_fill
+                            
+                # Apply header styling
+                header_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+                for cell in worksheet[1]:
+                    cell.fill = header_fill
+            
+            return output.getvalue()
+        
+        excel_data = export_to_excel()
+        st.download_button(
+            label="Download Delays Table (Excel)",
+            data=excel_data,
+            file_name="document_delays.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        # --------------------------
+        # 14) SAVE UPDATED CSV
+        # --------------------------
+        df["Issuance Expected"] = pd.to_datetime(df["Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
+        df["Expected review"] = pd.to_datetime(df["Expected review"], errors="coerce").dt.strftime("%d-%b-%y")
+        df["Final Issuance Expected"] = pd.to_datetime(df["Final Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
+        st.subheader("Download Updated CSV")
+        st.download_button(
+            label="Download Updated CSV",
+            data=df.to_csv(index=False).encode('utf-8'),
+            file_name="EDDR_with_calculated_expected.csv",
+            mime="text/csv"
+        )
+
+    # =====================================================================================
+    # TAB 2 — REVIEW TIMELINE (doc titles only; 2-line tags; overlap jitter)
+    # =====================================================================================
+    with tab2:
+        file_extension = CSV_INPUT_PATH.name.split('.')[-1].lower()
+        if file_extension not in ['xlsx', 'xls']:
+            st.info("The **Review Timeline** requires an **Excel** file with a sheet named **'Review Historical record'**.")
+            st.stop()
+
+        try:
+            df_hist = pd.read_excel(CSV_INPUT_PATH, sheet_name="Review Historical record")
+        except Exception:
+            st.warning("Could not find a sheet named **'Review Historical record'** in the uploaded Excel file.")
+            st.stop()
+
+        orig_cols = list(df_hist.columns)
+        if len(orig_cols) < 6:
+            st.error("The 'Review Historical record' sheet doesn't have the expected structure (need ≥6 columns).")
+            st.stop()
+
+        base_cols = orig_cols[:4]      # ID, Discipline, Area, Document Title (expected)
+        tail_cols = orig_cols[4:]      # Rev/Reviewed pairs
+
+        # Build Rev/Reviewed pairs using ORIGINAL names, pattern-matching on normalized strings
+        pairs = []
+        used = set()
+        for i, c in enumerate(tail_cols):
+            if i in used:
+                continue
+            if is_rev_col(c):
+                # nearest next "review-like" column
+                j = i + 1
+                found = False
+                while j < len(tail_cols):
+                    if j not in used and is_review_col(tail_cols[j]):
+                        pairs.append((tail_cols[i], tail_cols[j]))
+                        used.add(i); used.add(j)
+                        found = True
+                        break
+                    j += 1
+                if not found and i + 1 < len(tail_cols):
+                    # adjacency fallback
+                    pairs.append((tail_cols[i], tail_cols[i+1]))
+                    used.add(i); used.add(i+1)
+
+        # If still nothing, pair by position (5th with 6th, 7th with 8th, ...)
+        if not pairs:
+            for k in range(0, len(tail_cols), 2):
+                left = tail_cols[k]
+                right = tail_cols[k+1] if k+1 < len(tail_cols) else None
+                if right is not None:
+                    pairs.append((left, right))
+
+        if not pairs:
+            st.error("No valid (RevX, Review/Reviewed) pairs detected.")
+            st.write("Columns from 5th onward:", tail_cols)
+            st.stop()
+
+        with st.expander("Detected column pairs", expanded=False):
+            st.write(pairs)
+
+        # Parse dates in all Rev/Review columns
+        for rev_c, revw_c in pairs:
+            df_hist[rev_c] = df_hist[rev_c].apply(robust_parse_date)
+            df_hist[revw_c] = df_hist[revw_c].apply(robust_parse_date)
+
+        # Filter rows where first Rev column (e.g., Rev0) is not null
+        first_rev_col = pairs[0][0]
+        df_sel = df_hist[df_hist[first_rev_col].notna()].copy()
+        if df_sel.empty:
+            st.warning(f"No rows have a non-null **{first_rev_col}** (initial submission). Nothing to plot.")
+            st.stop()
+
+        # Build display label: use **Document Title only** on the y-axis to make space
+        title_candidates = ["Document Title", "Title", base_cols[min(3, len(base_cols)-1)]]
+        title_col = next((c for c in title_candidates if c in df_sel.columns), title_candidates[-1])
+
+        # Select by Title
+        st.subheader("Select Documents to Plot")
+        choices = st.multiselect(
+            "Choose one or more documents (must have initial submission date).",
+            options=sorted(df_sel[title_col].astype(str).unique().tolist())
+        )
+        if not choices:
+            st.info("Select at least one document title to render the timeline.")
+            st.stop()
+
+        df_plot = df_sel[df_sel[title_col].astype(str).isin(choices)].copy()
+
+        # Build segments (title, rev_tag, submit, review) for ALL pairs
+        segments = []
+        for _, r in df_plot.iterrows():
+            doc_title = str(r.get(title_col, ""))
+            for rev_c, revw_c in pairs:
+                submit_dt = r.get(rev_c, pd.NaT)
+                review_dt = r.get(revw_c, pd.NaT)
+                if pd.notna(submit_dt):
+                    m = re.findall(r'\d+', normalize_header(rev_c))
+                    rev_tag = f"Rev{m[0]}" if m else normalize_header(rev_c)
+                    segments.append({
+                        "title": doc_title,
+                        "rev": rev_tag,
+                        "submit": submit_dt,
+                        "review": review_dt if pd.notna(review_dt) else None
+                    })
+
+        if not segments:
+            st.warning("No valid submission dates found to plot.")
+            st.stop()
+
+        # y-axis (one row per document title)
+        titles = sorted(set(s["title"] for s in segments))
+        y_positions = {t: i for i, t in enumerate(titles)}
+
+        # Plot — two-line labels (RevX on top, date below), with slight x-jitter to avoid overlaps
+        st.subheader("Review Timeline (Submission ➜ Review)")
+        fig_t, ax_t = plt.subplots(figsize=(12, 0.95*max(4, len(titles))))
+        submit_marker = 'o'
+        review_marker = 's'   # square
+        label_offset_px = 12  # vertical offset above the line
+
+        color_cycle = plt.rcParams['axes.prop_cycle'].by_key().get('color', ['#1f77b4'])
+        title_color_map = {t: color_cycle[i % len(color_cycle)] for i, t in enumerate(titles)}
+
+        # Sort to reduce chaotic overlaps
+        segments.sort(key=lambda z: (y_positions[z["title"]], z["submit"], z["review"] or z["submit"]))
+
+        # Simple per-title collision tracker: for each date bucket, nudge labels left/right if repeated
+        def _day_bucket(ts):  # group labels that fall on the same calendar day
+            return pd.Timestamp(ts).normalize()
+
+        used_counts = {}  # (title, bucket) -> count
+
+        def jitter_px(title, ts):
+            b = _day_bucket(ts)
+            key = (title, b.value)
+            cnt = used_counts.get(key, 0)
+            used_counts[key] = cnt + 1
+            if cnt == 0:
+                return 0
+            sign = 1 if cnt % 2 == 1 else -1
+            return sign * ((cnt + 1) // 2) * 10  # pixels
+
+        for seg in segments:
+            y = y_positions[seg["title"]]
+            c = title_color_map[seg["title"]]
+            x0 = seg["submit"]
+            x1 = seg["review"]
+
+            # Submission
+            jp0 = jitter_px(seg["title"], x0)
+            ax_t.plot([x0], [y], marker=submit_marker, markersize=7, color=c, linestyle='None')
+            ax_t.annotate(f'{seg["rev"]}\n{x0.strftime("%d-%b-%y")}',
+                          xy=(x0, y), xytext=(jp0, label_offset_px), textcoords='offset points',
+                          ha='center', va='bottom',
+                          fontsize=7, bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.85))
+
+            # Review (if any)
+            if x1 is not None:
+                ax_t.plot([x0, x1], [y, y], color=c, linewidth=2, alpha=0.9)
+                ax_t.plot([x1], [y], marker=review_marker, markersize=6, color=c, linestyle='None')
+                jp1 = jitter_px(seg["title"], x1)
+                ax_t.annotate(f'{seg["rev"]} review\n{x1.strftime("%d-%b-%y")}',
+                               xy=(x1, y), xytext=(jp1, label_offset_px), textcoords='offset points',
+                               ha='center', va='bottom',
+                               fontsize=7, bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.85))
+            else:
+                # No review yet: short tick to indicate in-progress
+                ax_t.plot([x0, x0 + pd.Timedelta(days=1)], [y, y], color=c, linewidth=1.5, alpha=0.6)
+
+        ax_t.set_yticks([y_positions[t] for t in titles])
+        ax_t.set_yticklabels(titles, fontsize=8)
+        ax_t.set_ylim(-0.6, len(titles) - 0.4)
+        ax_t.set_xlabel("Date", fontsize=9)
+        ax_t.set_title("Submission → Review Timeline (by Document Title)", fontsize=11)
+        ax_t.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b-%Y"))
+        if show_grid:
+            ax_t.grid(True, axis='x', linestyle='--', alpha=0.35)
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        st.pyplot(fig_t)
+
+        # Compact table of plotted items
+        st.markdown("**Plotted Revisions (compact table)**")
+        tbl_rows = [{
+            "Document Title": s["title"],
+            "Revision": s["rev"],
+            "Submission": s["submit"].strftime("%d-%b-%y"),
+            "Review": s["review"].strftime("%d-%b-%y") if s["review"] else "—"
+        } for s in segments]
+        st.dataframe(pd.DataFrame(tbl_rows))
 
 if __name__ == "__main__":
     main()

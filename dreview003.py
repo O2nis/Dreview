@@ -1182,9 +1182,9 @@ def main():
                 "Revision": "—",
                 "Submission": "—",
                 "Review": "—",
-                "IFR Exp": s["ifr_exp"].strftime("%d-%b-%y") if pd.notna(s["ifr_exp"]) else "—",
-                "IFA Exp": s["ifa_exp"].strftime("%d-%b-%y") if s["ifa_exp"] else "—",
-                "IFT Exp": s["ift_exp"].strftime("%d-%b-%y") if s["ift_exp"] else "—"
+                "First Submission": s["ifr_exp"].strftime("%d-%b-%y") if pd.notna(s["ifr_exp"]) else "—",
+                "Document Review": s["ifa_exp"].strftime("%d-%b-%y") if s["ifa_exp"] else "—",
+                "Final Submission": s["ift_exp"].strftime("%d-%b-%y") if s["ift_exp"] else "—"
             })
         st.dataframe(pd.DataFrame(tbl_rows))
 

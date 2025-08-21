@@ -13,137 +13,151 @@ from io import BytesIO
 
 plt.rcParams.update({'font.size': 8})
 
-# Helper functions for the Review Timeline tab
-def is_rev_col(s):
-    s_norm = normalize_header(s)
-    return bool(re.match(r'^rev\d*$', s_norm))
-
-def is_review_col(s):
-    s_norm = normalize_header(s)
-    return bool(re.search(r'review', s_norm))
-
-def normalize_header(s):
-    return re.sub(r'[^a-z0-9]', '', str(s).lower())
-
 def robust_parse_date(d):
     """
     Enhanced date parser that handles multiple formats and converts to standard format
     Returns: 
         - pd.Timestamp for valid dates
         - pd.NaT for invalid dates
-        - Dates are always converted to 'dd-MMM-yy' format (e.g., '11-MAY-25')
     """
     if pd.isna(d) or d in ['', '########', '0-Jan-00', '00-Jan-00', 'NaN', 'NaT']:
         return pd.NaT
     
-    if isinstance(d, str) and re.match(r'^\d{2}-[A-Z]{3}-\d{2}$', d.upper()):
+    if isinstance(d, pd.Timestamp):
+        return d
+    
+    if isinstance(d, dt.datetime):
+        return pd.Timestamp(d)
+    
+    if isinstance(d, str):
+        # Normalize case for month abbreviations
+        d = d.upper()
+        if re.match(r'^\d{2}-[A-Z]{3}-\d{2}$', d):
+            try:
+                parsed = pd.to_datetime(d, format='%d-%b-%y', errors='coerce')
+                if pd.notna(parsed):
+                    return parsed
+            except Exception as e:
+                st.warning(f"Failed to parse date '{d}' with format '%d-%b-%y': {str(e)}")
+        
+        date_formats = [
+            '%d-%b-%y', '%d-%B-%y', '%d/%m/%Y', '%m/%d/%Y', '%Y-%m-%d',
+            '%b %d, %Y', '%B %d, %Y', '%d.%m.%Y', '%Y%m%d', '%m-%d-%Y', '%d %b %Y'
+        ]
+        
+        for fmt in date_formats:
+            try:
+                parsed = pd.to_datetime(d, format=fmt, errors='coerce')
+                if pd.notna(parsed):
+                    return parsed
+            except Exception as e:
+                pass
+        
         try:
-            return pd.to_datetime(d, format='%d-%b-%y')
-        except:
+            parsed = pd.to_datetime(d, errors='coerce')
+            if pd.notna(parsed):
+                return parsed
+        except Exception as e:
             pass
-    
-    date_formats = [
-        '%d-%b-%y', '%d-%B-%y', '%d/%m/%Y', '%m/%d/%Y', '%Y-%m-%d',
-        '%b %d, %Y', '%B %d, %Y', '%d.%m.%Y', '%Y%m%d', '%m-%d-%Y', '%d %b %Y'
-    ]
-    
-    for fmt in date_formats:
-        try:
-            dt = pd.to_datetime(d, format=fmt, errors='coerce')
-            if not pd.isna(dt):
-                return pd.to_datetime(dt.strftime('%d-%b-%y').upper(), format='%d-%b-%y')
-        except:
-            continue
-    
-    try:
-        dt = pd.to_datetime(d, errors='coerce')
-        if not pd.isna(dt):
-            return pd.to_datetime(dt.strftime('%d-%b-%y').upper(), format='%d-%b-%y')
-    except:
-        pass
+        
+        st.warning(f"Could not parse date: '{d}'")
     
     return pd.NaT
+
+def is_rev_col(col_name):
+    """Check if column name matches a revision-like pattern (e.g., Rev0, Revision 1)."""
+    col_norm = normalize_header(col_name)
+    return bool(re.search(r'rev(ision)?\s*\d+', col_norm, re.IGNORECASE))
+
+def is_review_col(col_name):
+    """Check if column name matches a review-like pattern (e.g., Reviewed0, Review Date)."""
+    col_norm = normalize_header(col_name)
+    return bool(re.search(r'review(ed)?(\s*date)?\s*\d*', col_norm, re.IGNORECASE))
+
+def normalize_header(h):
+    """Normalize header by removing extra spaces and converting to lowercase."""
+    return ' '.join(str(h).lower().split())
 
 def main():
     st.set_page_config(page_title="S-Curve Analysis", layout="wide")
 
-    # ----------------------------------------------------------------
-    # A) TEMPLATE CSV DOWNLOAD (with first 3 rows + headers)
-    # ----------------------------------------------------------------
-    TEMPLATE_CONTENT = """ID,Discipline,Area,Document Title,Project Indentifer,Originator,Document Number,Document Type ,Counter ,Revision,Area code,Disc,Category,Transmittal Code,Comment Sheet OE,Comment Sheet EPC,Schedule [Days],Issued by EPC,Issuance Expected,Review By OE,Expected review,Reply By EPC,Final Issuance Expected,Man Hours ,Status,CS rev,Flag
+    # Create tabs
+    tab1, tab2 = st.tabs(["S-Curve Analysis", "Review Timeline"])
+
+    with tab1:
+        # ----------------------------------------------------------------
+        # A) TEMPLATE CSV DOWNLOAD (with first 3 rows + headers)
+        # ----------------------------------------------------------------
+        TEMPLATE_CONTENT = """ID,Discipline,Area,Document Title,Project Indentifer,Originator,Document Number,Document Type ,Counter ,Revision,Area code,Disc,Category,Transmittal Code,Comment Sheet OE,Comment Sheet EPC,Schedule [Days],Issued by EPC,Issuance Expected,Review By OE,Expected review,Reply By EPC,Final Issuance Expected,Man Hours ,Status,CS rev,Flag
 1,General,General,Overall site layout,KFE,SC,0001,MA,00,A,GEN,GN,DRG,"KFE-SC-MOEM-T-0052-AO-PV System Analysis Report, Project Quality Management Plan and TCO.",MOEM-TCO-CI-0017-Rev_00_FI,MOEM-TCO-CI-0017-Rev_00_CE,10,4-Apr-25,,4-Apr-25, , , ,10,CO,1,0
 2,General,General,Overall Single Line Diagram (PV plant + interconnection facilities),KFE,SC,0002,MA,00,A,GEN,GN,DRG,,,,10,18-Mar-25,,18-Mar-25, , , ,10,CO,1,0
 3,PV,General,PVsyst yield estimates,KFE,SC,0003,MA,00,A,GEN,PV,DRG,,,,10,,,, , , ,10,FN,0,0
 """
 
-    st.subheader("Download CSV Template")
-    st.download_button(
-        label="Download Template CSV",
-        data=TEMPLATE_CONTENT.encode("utf-8"),
-        file_name="EDDR_template.csv",
-        mime="text/csv"
-    )
+        st.subheader("Download CSV Template")
+        st.download_button(
+            label="Download Template CSV",
+            data=TEMPLATE_CONTENT.encode("utf-8"),
+            file_name="EDDR_template.csv",
+            mime="text/csv"
+        )
 
-    # --------------------------
-    # 1) SIDEBAR INPUTS
-    # --------------------------
-    st.sidebar.header("Configuration")
-    CSV_INPUT_PATH = st.sidebar.file_uploader("Upload Input File", type=["csv", "xlsx", "xls"])
-    INITIAL_DATE = st.sidebar.date_input("Initial Date for Expected Calculations", value=pd.to_datetime("2024-08-01"))
-    IFR_WEIGHT = st.sidebar.number_input("Issued By EPC Weight", value=0.40, step=0.05)
-    IFA_WEIGHT = st.sidebar.number_input("Review By OE Weight", value=0.30, step=0.05)
-    IFT_WEIGHT = st.sidebar.number_input("Reply By EPC Weight", value=0.30, step=0.05)
-    RECOVERY_FACTOR = st.sidebar.number_input("Recovery Factor", value=0.75, step=0.05)
-    IFA_DELTA_DAYS = st.sidebar.number_input("Days to add for Expected Review", value=10, step=1)
-    IFT_DELTA_DAYS = st.sidebar.number_input("Days to add for Final Issuance Expected", value=5, step=1)
+        # --------------------------
+        # 1) SIDEBAR INPUTS
+        # --------------------------
+        st.sidebar.header("Configuration")
+        CSV_INPUT_PATH = st.sidebar.file_uploader("Upload Input File", type=["csv", "xlsx", "xls"])
+        INITIAL_DATE = st.sidebar.date_input("Initial Date for Expected Calculations", value=pd.to_datetime("2024-08-01"))
+        IFR_WEIGHT = st.sidebar.number_input("Issued By EPC Weight", value=0.40, step=0.05)
+        IFA_WEIGHT = st.sidebar.number_input("Review By OE Weight", value=0.30, step=0.05)
+        IFT_WEIGHT = st.sidebar.number_input("Reply By EPC Weight", value=0.30, step=0.05)
+        RECOVERY_FACTOR = st.sidebar.number_input("Recovery Factor", value=0.75, step=0.05)
+        IFA_DELTA_DAYS = st.sidebar.number_input("Days to add for Expected Review", value=10, step=1)
+        IFT_DELTA_DAYS = st.sidebar.number_input("Days to add for Final Issuance Expected", value=5, step=1)
 
-    IGNORE_STATUS = st.sidebar.text_input("Status to Ignore (comma-separated, case-sensitive, leave blank to include all)", value="")
-    PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
-    INCLUDE_COMPLETED = st.sidebar.checkbox("Include Completed Documents (Flag=1) in Delays Table", value=True)
+        IGNORE_STATUS = st.sidebar.text_input("Status to Ignore (comma-separated, case-sensitive, leave blank to include all)", value="")
+        PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
+        INCLUDE_COMPLETED = st.sidebar.checkbox("Include Completed Documents (Flag=1) in Delays Table", value=True)
 
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### Visualization Settings")
-    seaborn_style = st.sidebar.selectbox(
-        "Seaborn Style",
-        ["darkgrid", "whitegrid", "dark", "white", "ticks"],
-        index=1
-    )
-    seaborn_context = st.sidebar.selectbox(
-        "Seaborn Context",
-        ["paper", "notebook", "talk", "poster"],
-        index=1
-    )
-    color_scheme = st.sidebar.selectbox(
-        "Color Scheme (Bar/Donut/Pie Charts)",
-        ["Standard", "Shades of Blue", "Shades of Green", "Seaborn Palette"],
-        index=1
-    )
-    seaborn_palette = st.sidebar.selectbox(
-        "Seaborn Palette (if Seaborn Palette selected)",
-        ["deep", "muted", "bright", "pastel", "dark", "colorblind", "Set1", "Set2", "Set3"],
-        index=0
-    )
-    font_scale = st.sidebar.slider("Font Scale", min_value=0.5, max_value=2.0, value=1.0, step=0.1)
-    show_grid = st.sidebar.checkbox("Show Grid Lines", value=True)
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### Visualization Settings")
+        seaborn_style = st.sidebar.selectbox(
+            "Seaborn Style",
+            ["darkgrid", "whitegrid", "dark", "white", "ticks"],
+            index=1
+        )
+        seaborn_context = st.sidebar.selectbox(
+            "Seaborn Context",
+            ["paper", "notebook", "talk", "poster"],
+            index=1
+        )
+        color_scheme = st.sidebar.selectbox(
+            "Color Scheme (Bar/Donut/Pie Charts)",
+            ["Standard", "Shades of Blue", "Shades of Green", "Seaborn Palette"],
+            index=1
+        )
+        seaborn_palette = st.sidebar.selectbox(
+            "Seaborn Palette (if Seaborn Palette selected)",
+            ["deep", "muted", "bright", "pastel", "dark", "colorblind", "Set1", "Set2", "Set3"],
+            index=0
+        )
+        font_scale = st.sidebar.slider("Font Scale", min_value=0.5, max_value=2.0, value=1.0, step=0.1)
+        show_grid = st.sidebar.checkbox("Show Grid Lines", value=True)
 
-    sns.set_style(seaborn_style)
-    sns.set_context(seaborn_context, font_scale=font_scale)
+        sns.set_style(seaborn_style)
+        sns.set_context(seaborn_context, font_scale=font_scale)
 
-    st.sidebar.markdown("### S-Curve Color Scheme")
-    actual_color = st.sidebar.color_picker("Actual Progress Color", "#1f77b4")
-    expected_color = st.sidebar.color_picker("Expected Progress Color", "#ff7f0e")
-    projected_color = st.sidebar.color_picker("Projected Recovery Color", "#2ca02c")
-    today_color = st.sidebar.color_picker("Today Line Color", "#000000")
-    end_date_color = st.sidebar.color_picker("End Date Line Color", "#d62728")
+        st.sidebar.markdown("### S-Curve Color Scheme")
+        actual_color = st.sidebar.color_picker("Actual Progress Color", "#1f77b4")
+        expected_color = st.sidebar.color_picker("Expected Progress Color", "#ff7f0e")
+        projected_color = st.sidebar.color_picker("Projected Recovery Color", "#2ca02c")
+        today_color = st.sidebar.color_picker("Today Line Color", "#000000")
+        end_date_color = st.sidebar.color_picker("End Date Line Color", "#d62728")
 
-    if CSV_INPUT_PATH is None:
-        st.warning("Please upload your input CSV or Excel file or download the template above.")
-        return
+        if CSV_INPUT_PATH is None:
+            st.warning("Please upload your input CSV or Excel file or download the template above.")
+            return
 
-    # Create tabs for different views
-    tab1, tab2 = st.tabs(["S-Curve Analysis", "Review Timeline"])
-
-    with tab1:
         # --------------------------
         # 2) LOAD CSV OR EXCEL & PREP DATA WITH ROBUST DATE PARSING
         # --------------------------
@@ -173,7 +187,7 @@ def main():
                 st.error(f"All rows have Status in exclusion list. No data remains after filtering.")
                 return
 
-        date_columns = ["Issued by EPC", "Review By OE", "Reply By EPC"]
+        date_columns = ["Issued by EPC", "Review By OE", "Reply By EPC", "Issuance Expected", "Expected review", "Final Issuance Expected"]
         for col in date_columns:
             df[col] = df[col].apply(robust_parse_date)
             na_count = df[col].isna().sum()
@@ -191,32 +205,50 @@ def main():
 
         ift_expected_max = df["Final Issuance Expected"].dropna().max()
         if pd.isna(ift_expected_max):
-            st.warning("No valid Final Issuance Expected in data. Falling back to overall max date.")
-            ift_expected_max = (
-                pd.Series(df[["Issuance Expected","Expected review","Final Issuance Expected"]].values.ravel())
-                .dropna()
-                .max()
-            )
+            st.warning("No valid Final Issuance Expected dates found. Checking other date columns.")
+            date_cols = ["Issuance Expected", "Expected review", "Final Issuance Expected", 
+                        "Issued by EPC", "Review By OE", "Reply By EPC"]
+            all_dates = df[date_cols].values.ravel()
+            valid_dates = pd.Series(all_dates).dropna()
+            if valid_dates.empty:
+                st.error("No valid milestone dates found in any date columns. Cannot generate S-Curve.")
+                return
+            ift_expected_max = valid_dates.max()
+        else:
+            date_cols = ["Issuance Expected", "Expected review", "Final Issuance Expected", 
+                        "Issued by EPC", "Review By OE", "Reply By EPC"]
+            all_dates = df[date_cols].values.ravel()
+            valid_dates = pd.Series(all_dates).dropna()
 
-        date_cols = ["Issued by EPC","Review By OE","Reply By EPC","Issuance Expected","Expected review","Final Issuance Expected"]
-        all_dates = df[date_cols].values.ravel()
-        valid_dates = pd.Series(all_dates).dropna()
         if valid_dates.empty:
-            st.error("No valid milestone dates found.")
+            st.error("No valid dates found in any milestone columns. Cannot proceed with S-Curve plotting.")
             return
 
         start_date = valid_dates.min()
         today_date = pd.to_datetime("2025-08-15").normalize()  # Hardcoded to match the scenario date
         total_mh = df["Man Hours "].sum()
 
-        # --------------------------
-        # 3) BUILD TIMELINES
-        # --------------------------
-        actual_timeline = pd.date_range(start=start_date, end=today_date, freq='W')
-        expected_timeline = pd.date_range(start=start_date, end=ift_expected_max, freq='W')
+        # Validate timeline
+        if start_date > today_date:
+            st.warning(f"Start date ({start_date.strftime('%d-%b-%Y')}) is after today ({today_date.strftime('%d-%b-%Y')}). Using single point timeline.")
+            actual_timeline = [today_date]
+        else:
+            actual_timeline = pd.date_range(start=start_date, end=today_date, freq='W')
+            if len(actual_timeline) == 0:
+                st.warning("Actual timeline is empty. Using single point at today.")
+                actual_timeline = [today_date]
+
+        if start_date > ift_expected_max:
+            st.warning(f"Start date ({start_date.strftime('%d-%b-%Y')}) is after max expected date ({ift_expected_max.strftime('%d-%b-%Y')}). Using single point timeline.")
+            expected_timeline = [ift_expected_max]
+        else:
+            expected_timeline = pd.date_range(start=start_date, end=ift_expected_max, freq='W')
+            if len(expected_timeline) == 0:
+                st.warning("Expected timeline is empty. Using single point at max expected date.")
+                expected_timeline = [ift_expected_max]
 
         # --------------------------
-        # 4) BUILD ACTUAL AND EXPECTED CUMULATIVE VALUES
+        # 3) BUILD ACTUAL AND EXPECTED CUMULATIVE VALUES
         # --------------------------
         actual_cum = []
         last_actual_value = 0.0
@@ -244,10 +276,6 @@ def main():
             else:
                 actual_cum.append(last_actual_value)
         
-        if last_progress_date < today_date:
-            actual_timeline = list(actual_timeline) + [today_date]
-            actual_cum = actual_cum + [last_actual_value]
-
         expected_cum = []
         last_expected_value = 0.0
         last_expected_progress_date = start_date
@@ -274,15 +302,24 @@ def main():
             else:
                 expected_cum.append(last_expected_value)
         
-        if pd.notna(ift_expected_max) and last_expected_progress_date < ift_expected_max:
-            expected_timeline = list(expected_timeline) + [ift_expected_max]
-            expected_cum = expected_cum + [last_expected_value]
+        if not actual_cum or not expected_cum:
+            st.error("No cumulative progress data generated. Check input data for valid dates and man-hours.")
+            return
 
         final_actual = actual_cum[-1]
         final_expected = expected_cum[-1]
 
+        # Extend timelines if necessary
+        if last_progress_date < today_date:
+            actual_timeline = list(actual_timeline) + [today_date]
+            actual_cum = actual_cum + [last_actual_value]
+        
+        if pd.notna(ift_expected_max) and last_expected_progress_date < ift_expected_max:
+            expected_timeline = list(expected_timeline) + [ift_expected_max]
+            expected_cum = expected_cum + [last_expected_value]
+
         # --------------------------
-        # 5) PROJECTED RECOVERY LINE
+        # 4) PROJECTED RECOVERY LINE
         # --------------------------
         if today_date <= actual_timeline[0]:
             today_idx = 0
@@ -327,7 +364,7 @@ def main():
             recovery_end_date = last_date
 
         # --------------------------
-        # 6) S-CURVE
+        # 5) S-CURVE
         # --------------------------
         st.subheader("S-Curve with Delay Recovery")
         y_actual = [x/total_mh*100 for x in actual_cum] if PERCENTAGE_VIEW else actual_cum
@@ -405,7 +442,7 @@ def main():
         st.pyplot(fig)
 
         # --------------------------
-        # 7) COLOR SCHEME FOR OTHER CHARTS
+        # 6) COLOR SCHEME FOR OTHER CHARTS
         # --------------------------
         standard_cycler = plt.rcParamsDefault['axes.prop_cycle']
         blue_cycler = cycler(color=["#cce5ff", "#99ccff", "#66b2ff", "#3399ff", "#007fff"])
@@ -423,7 +460,7 @@ def main():
             plt.rc("axes", prop_cycle=palette_cycler)
 
         # --------------------------
-        # 8) ACTUAL vs EXPECTED HOURS BY DISCIPLINE
+        # 7) ACTUAL vs EXPECTED HOURS BY DISCIPLINE
         # --------------------------
         end_date = max(today_date, ift_expected_max)
         final_actual_progress = []
@@ -482,7 +519,7 @@ def main():
         st.pyplot(fig2)
 
         # --------------------------
-        # 9) TWO DONUT CHARTS SIDE BY SIDE
+        # 8) TWO DONUT CHARTS SIDE BY SIDE
         # --------------------------
         total_actual = df["Actual_Progress_At_Final"].sum()
         overall_pct = total_actual / total_mh if total_mh > 0 else 0
@@ -516,7 +553,7 @@ def main():
             st.pyplot(fig_ifr)
 
         # --------------------------
-        # 10) NESTED PIE CHART FOR DISCIPLINE
+        # 9) NESTED PIE CHART FOR DISCIPLINE
         # --------------------------
         st.subheader("Nested Pie Chart: Document Completion by Discipline")
         def get_doc_status(row):
@@ -597,7 +634,7 @@ def main():
                 st.pyplot(fig_nested_disc)
 
         # --------------------------
-        # 11) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
+        # 10) STACKED BAR IFR/IFA/IFT BY DISCIPLINE
         # --------------------------
         df["Issued_bool"] = df["Issued by EPC"].notna().astype(int)
         df["Review_bool"] = df["Review By OE"].notna().astype(int)
@@ -620,7 +657,7 @@ def main():
         st.pyplot(fig4)
 
         # --------------------------
-        # 12) DELAY BY DISCIPLINE (AS OF TODAY)
+        # 11) DELAY BY DISCIPLINE (AS OF TODAY)
         # --------------------------
         st.subheader("Delay Percentage by Discipline (As of Today)")
         actual_prog_today = []
@@ -665,7 +702,7 @@ def main():
         st.dataframe(disc_delay)
 
         # --------------------------
-        # 13) FINAL MILESTONE + STATUS STACKED BAR
+        # 12) FINAL MILESTONE + STATUS STACKED BAR
         # --------------------------
         def get_final_milestone(row):
             if pd.notna(row["Reply By EPC"]):
@@ -703,7 +740,7 @@ def main():
         st.pyplot(fig_status)
 
         # --------------------------
-        # 13.5) SIMPLIFIED DELAY TABLE FOR ISSUED BY EPC
+        # 13) SIMPLIFIED DELAY TABLE FOR ISSUED BY EPC
         # --------------------------
         st.subheader("Document Delays (Issued by EPC vs Expected Issuance)")
         
@@ -726,7 +763,9 @@ def main():
             "ID": df["ID"],
             "Discipline": df["Discipline"],
             "Document Title": df["Document Title"],
-            "Issuance Expected": df["Issuance Expected"].dt.strftime("%d-%b-%y"),
+            "Issuance Expected": df["Issuance Expected"].apply(
+                lambda x: x.strftime("%d-%b-%y") if pd.notna(x) else "—"
+            ),
             "Actual Issued": df["Issued by EPC"].apply(
                 lambda x: x.strftime("%d-%b-%y") if pd.notna(x) else "Not Issued"
             ),
@@ -789,21 +828,28 @@ def main():
         # --------------------------
         # 14) SAVE UPDATED CSV
         # --------------------------
-        df["Issuance Expected"] = pd.to_datetime(df["Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
-        df["Expected review"] = pd.to_datetime(df["Expected review"], errors="coerce").dt.strftime("%d-%b-%y")
-        df["Final Issuance Expected"] = pd.to_datetime(df["Final Issuance Expected"], errors="coerce").dt.strftime("%d-%b-%y")
+        df_for_export = df.copy()
+        df_for_export["Issuance Expected"] = df["Issuance Expected"].apply(
+            lambda x: x.strftime("%d-%b-%y") if pd.notna(x) else ""
+        )
+        df_for_export["Expected review"] = df["Expected review"].apply(
+            lambda x: x.strftime("%d-%b-%y") if pd.notna(x) else ""
+        )
+        df_for_export["Final Issuance Expected"] = df["Final Issuance Expected"].apply(
+            lambda x: x.strftime("%d-%b-%y") if pd.notna(x) else ""
+        )
         st.subheader("Download Updated CSV")
         st.download_button(
             label="Download Updated CSV",
-            data=df.to_csv(index=False).encode('utf-8'),
+            data=df_for_export.to_csv(index=False).encode('utf-8'),
             file_name="EDDR_with_calculated_expected.csv",
             mime="text/csv"
         )
 
-    # =====================================================================================
-    # TAB 2 — REVIEW TIMELINE (doc titles only; 2-line tags; overlap jitter)
-    # =====================================================================================
     with tab2:
+        # =====================================================================================
+        # TAB 2 — REVIEW TIMELINE (doc titles only; 2-line tags; selective labeling)
+        # =====================================================================================
         file_extension = CSV_INPUT_PATH.name.split('.')[-1].lower()
         if file_extension not in ['xlsx', 'xls']:
             st.info("The **Review Timeline** requires an **Excel** file with a sheet named **'Review Historical record'**.")
@@ -889,8 +935,8 @@ def main():
 
         df_plot = df_sel[df_sel[title_col].astype(str).isin(choices)].copy()
 
-        # Build segments (title, rev_tag, submit, review) for ALL pairs
-        segments = []
+        # Build actual segments (title, rev_tag, submit, review) for ALL pairs
+        actual_segments = []
         for _, r in df_plot.iterrows():
             doc_title = str(r.get(title_col, ""))
             for rev_c, revw_c in pairs:
@@ -899,97 +945,247 @@ def main():
                 if pd.notna(submit_dt):
                     m = re.findall(r'\d+', normalize_header(rev_c))
                     rev_tag = f"Rev{m[0]}" if m else normalize_header(rev_c)
-                    segments.append({
+                    actual_segments.append({
                         "title": doc_title,
                         "rev": rev_tag,
                         "submit": submit_dt,
                         "review": review_dt if pd.notna(review_dt) else None
                     })
 
-        if not segments:
+        if not actual_segments:
             st.warning("No valid submission dates found to plot.")
             st.stop()
 
+        # Build expected segments from first sheet (Issuance Expected, Expected review, Final Issuance Expected)
+        expected_segments = []
+        df_expected = df[df["Document Title"].astype(str).isin(choices)].copy()
+        for _, r in df_expected.iterrows():
+            doc_title = str(r["Document Title"])
+            ifr_exp = robust_parse_date(r["Issuance Expected"])
+            ifa_exp = robust_parse_date(r["Expected review"])
+            ift_exp = robust_parse_date(r["Final Issuance Expected"])
+            if pd.notna(ifr_exp):  # Only include if Issuance Expected is not null
+                expected_segments.append({
+                    "title": doc_title,
+                    "ifr_exp": ifr_exp,
+                    "ifa_exp": ifa_exp if pd.notna(ifa_exp) else None,
+                    "ift_exp": ift_exp if pd.notna(ift_exp) else None
+                })
+
+        if not expected_segments:
+            st.warning("No valid expected dates found for selected documents in the first sheet.")
+            # Proceed with actual segments only
+
         # y-axis (one row per document title)
-        titles = sorted(set(s["title"] for s in segments))
+        titles = sorted(set(s["title"] for s in actual_segments))
         y_positions = {t: i for i, t in enumerate(titles)}
 
-        # Plot — two-line labels (RevX on top, date below), with slight x-jitter to avoid overlaps
-        st.subheader("Review Timeline (Submission ➜ Review)")
-        fig_t, ax_t = plt.subplots(figsize=(12, 0.95*max(4, len(titles))))
+        # Identify first and last points to label for each document
+        label_points = {}
+        for title in titles:
+            segs = [s for s in actual_segments if s["title"] == title]
+            if not segs:
+                continue
+            # First submission: earliest submit date
+            first_seg = min(segs, key=lambda s: s["submit"])
+            label_points[(title, first_seg["submit"], "submit")] = first_seg["rev"]
+            # Last point: latest submit or review date
+            dates = [(s["submit"], "submit", s["rev"]) for s in segs]
+            dates.extend([(s["review"], "review", s["rev"]) for s in segs if s["review"] is not None])
+            if dates:
+                last_date, last_type, last_rev = max(dates, key=lambda x: x[0])
+                label_points[(title, last_date, last_type)] = last_rev
+
+        # Debug: Show which points will be labeled
+        with st.expander("Points Selected for Labeling", expanded=False):
+            st.write(label_points)
+
+        # Plot — two-line labels with above/below placement and selective labeling
+        st.subheader("Review Timeline (Submission ➜ Review with Expected Dates)")
+        fig_t, ax_t = plt.subplots(figsize=(12, 1.1*max(4, len(titles))))  # Increased height for more labels
+        ax_t.xaxis_date()  # Set x-axis to datetime immediately
+        ax_t.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b-%Y"))
+        ax_t.xaxis.set_major_locator(mdates.AutoDateLocator())
         submit_marker = 'o'
         review_marker = 's'   # square
-        label_offset_px = 12  # vertical offset above the line
+        expected_marker = '^'  # triangle for expected dates
+        label_offset_y = 12   # Initial vertical offset (above or below the line, pixels)
+        font_size = 7         # Slightly larger font for readability
+        max_jitter_x = 20     # Maximum horizontal jitter (pixels)
+        vertical_step = 10    # Vertical offset step for stacking (pixels)
+        label_width_days = 3  # Tighter overlap detection
+        expected_color = '#ff7f0e'  # Match S-Curve expected color
 
         color_cycle = plt.rcParams['axes.prop_cycle'].by_key().get('color', ['#1f77b4'])
         title_color_map = {t: color_cycle[i % len(color_cycle)] for i, t in enumerate(titles)}
 
-        # Sort to reduce chaotic overlaps
-        segments.sort(key=lambda z: (y_positions[z["title"]], z["submit"], z["review"] or z["submit"]))
+        # Track occupied label regions separately for above and below
+        occupied_regions_above = []
+        occupied_regions_below = []
 
-        # Simple per-title collision tracker: for each date bucket, nudge labels left/right if repeated
-        def _day_bucket(ts):  # group labels that fall on the same calendar day
-            return pd.Timestamp(ts).normalize()
+        def is_overlapping(x_center, y_center, x_min, x_max, y_min, y_max, is_actual=False):
+            """Check if a new label overlaps with existing labels in the same group (above or below)."""
+            regions = occupied_regions_above if is_actual else occupied_regions_below
+            for region in regions:
+                ox_center, oy_center, ox_min, ox_max, oy_min, oy_max = region
+                if (x_max > ox_min and x_min < ox_max and
+                    y_max > oy_min and y_min < oy_max):
+                    return True
+            return False
 
-        used_counts = {}  # (title, bucket) -> count
+        def get_label_position(x, y, title, ts, is_actual=False):
+            """Calculate label position: above for actual, below for expected, with stacking."""
+            base_y_offset = label_offset_y if is_actual else -label_offset_y
+            y_offset = base_y_offset
+            x_jitter = 0
+            attempt = 0
+            max_attempts = 10  # Limit stacking to prevent excessive spread
 
-        def jitter_px(title, ts):
-            b = _day_bucket(ts)
-            key = (title, b.value)
-            cnt = used_counts.get(key, 0)
-            used_counts[key] = cnt + 1
-            if cnt == 0:
-                return 0
-            sign = 1 if cnt % 2 == 1 else -1
-            return sign * ((cnt + 1) // 2) * 10  # pixels
+            # Convert x (datetime) to numeric for collision detection
+            x_num = mdates.date2num(x)
+            x_min = x_num - label_width_days / 2
+            x_max = x_num + label_width_days / 2
+            y_min = y + (y_offset - 5) / 100  # Approximate height in y-units
+            y_max = y + (y_offset + 15) / 100
 
-        for seg in segments:
+            while is_overlapping(x_num, y + y_offset / 100, x_min, x_max, y_min, y_max, is_actual):
+                attempt += 1
+                if attempt % 2 == 0:
+                    # Vertical stacking (up for actual, down for expected)
+                    y_offset += vertical_step if is_actual else -vertical_step
+                else:
+                    # Horizontal jitter (alternate left/right)
+                    x_jitter = (-1) ** attempt * (attempt // 2 + 1) * 10
+                    if abs(x_jitter) > max_jitter_x:
+                        x_jitter = 0
+                        y_offset += vertical_step if is_actual else -vertical_step
+                y_min = y + (y_offset - 5) / 100
+                y_max = y + (y_offset + 15) / 100
+                if attempt >= max_attempts:
+                    break  # Accept slight overlap if necessary
+
+            (occupied_regions_above if is_actual else occupied_regions_below).append(
+                (x_num, y + y_offset / 100, x_min, x_max, y_min, y_max)
+            )
+            return x_jitter, y_offset
+
+        # Plot actual segments (submission and review)
+        actual_segments.sort(key=lambda z: (y_positions[z["title"]], z["submit"], z["review"] or z["submit"]))
+        for seg in actual_segments:
             y = y_positions[seg["title"]]
             c = title_color_map[seg["title"]]
             x0 = seg["submit"]
             x1 = seg["review"]
 
-            # Submission
-            jp0 = jitter_px(seg["title"], x0)
+            # Plot submission marker
             ax_t.plot([x0], [y], marker=submit_marker, markersize=7, color=c, linestyle='None')
-            ax_t.annotate(f'{seg["rev"]}\n{x0.strftime("%d-%b-%y")}',
-                          xy=(x0, y), xytext=(jp0, label_offset_px), textcoords='offset points',
-                          ha='center', va='bottom',
-                          fontsize=7, bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.85))
+            # Label only if it's the first submission
+            if (seg["title"], x0, "submit") in label_points:
+                x_jitter0, y_offset0 = get_label_position(x0, y, seg["title"], x0, is_actual=True)
+                ax_t.annotate(f'{seg["rev"]}\n{x0.strftime("%d-%b-%y")}',
+                              xy=(x0, y), xytext=(x_jitter0, y_offset0),
+                              textcoords='offset points', ha='center', va='bottom',
+                              fontsize=font_size, bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85))
 
-            # Review (if any)
+            # Plot review (if any)
             if x1 is not None:
                 ax_t.plot([x0, x1], [y, y], color=c, linewidth=2, alpha=0.9)
                 ax_t.plot([x1], [y], marker=review_marker, markersize=6, color=c, linestyle='None')
-                jp1 = jitter_px(seg["title"], x1)
-                ax_t.annotate(f'{seg["rev"]} review\n{x1.strftime("%d-%b-%y")}',
-                               xy=(x1, y), xytext=(jp1, label_offset_px), textcoords='offset points',
-                               ha='center', va='bottom',
-                               fontsize=7, bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.85))
+                # Label only if it's the last point
+                if (seg["title"], x1, "review") in label_points:
+                    x_jitter1, y_offset1 = get_label_position(x1, y, seg["title"], x1, is_actual=True)
+                    ax_t.annotate(f'{seg["rev"]} review\n{x1.strftime("%d-%b-%y")}',
+                                  xy=(x1, y), xytext=(x_jitter1, y_offset1),
+                                  textcoords='offset points', ha='center', va='bottom',
+                                  fontsize=font_size, bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85))
             else:
                 # No review yet: short tick to indicate in-progress
                 ax_t.plot([x0, x0 + pd.Timedelta(days=1)], [y, y], color=c, linewidth=1.5, alpha=0.6)
+
+        # Plot expected segments (IFR Exp, IFA Exp, IFT Exp)
+        for seg in expected_segments:
+            y = y_positions.get(seg["title"])
+            if y is None:
+                continue  # Skip if title not in selected documents
+            dates = []
+            labels = []
+            if pd.notna(seg["ifr_exp"]):
+                dates.append(seg["ifr_exp"])
+                labels.append("Submission")
+            if seg["ifa_exp"] is not None:
+                dates.append(seg["ifa_exp"])
+                labels.append("Review")
+            if seg["ift_exp"] is not None:
+                dates.append(seg["ift_exp"])
+                labels.append("Final Doc")
+
+            if dates:
+                # Ensure dates are pd.Timestamp, re-parse if strings
+                valid_dates = []
+                valid_labels = []
+                for d, lbl in zip(dates, labels):
+                    if isinstance(d, str):
+                        d = robust_parse_date(d)
+                    if pd.notna(d):
+                        valid_dates.append(d.to_pydatetime() if isinstance(d, pd.Timestamp) else d)
+                        valid_labels.append(lbl)
+                if valid_dates:
+                    # Sort dates to ensure correct plotting order
+                    date_label_pairs = sorted(zip(valid_dates, valid_labels), key=lambda x: x[0])
+                    sorted_dates, sorted_labels = zip(*date_label_pairs) if date_label_pairs else ([], [])
+                    sorted_dates = list(sorted_dates)  # Convert to list of datetime.datetime
+                    if sorted_dates:
+                        # Plot dotted line connecting expected dates
+                        ax_t.plot(sorted_dates, [y] * len(sorted_dates), linestyle=':', color=expected_color, linewidth=2, alpha=0.7, label="Expected Timeline" if y == y_positions[titles[0]] else "")
+                        # Plot markers for expected dates
+                        for x, label in zip(sorted_dates, sorted_labels):
+                            ax_t.plot([x], [y], marker=expected_marker, markersize=6, color=expected_color, linestyle='None')
+                            x_jitter, y_offset = get_label_position(x, y, seg["title"], x, is_actual=False)
+                            ax_t.annotate(f'{label}\n{x.strftime("%d-%b-%y")}',
+                                          xy=(x, y), xytext=(x_jitter, y_offset),
+                                          textcoords='offset points', ha='center', va='top',
+                                          fontsize=font_size, bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85))
 
         ax_t.set_yticks([y_positions[t] for t in titles])
         ax_t.set_yticklabels(titles, fontsize=8)
         ax_t.set_ylim(-0.6, len(titles) - 0.4)
         ax_t.set_xlabel("Date", fontsize=9)
-        ax_t.set_title("Submission → Review Timeline (by Document Title)", fontsize=11)
-        ax_t.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b-%Y"))
+        ax_t.set_title("Submission → Review Timeline with Expected Dates (by Document Title)", fontsize=11)
         if show_grid:
             ax_t.grid(True, axis='x', linestyle='--', alpha=0.35)
+        ax_t.legend(fontsize=8)
         plt.xticks(rotation=45)
         plt.tight_layout()
         st.pyplot(fig_t)
 
-        # Compact table of plotted items
-        st.markdown("**Plotted Revisions (compact table)**")
-        tbl_rows = [{
-            "Document Title": s["title"],
-            "Revision": s["rev"],
-            "Submission": s["submit"].strftime("%d-%b-%y"),
-            "Review": s["review"].strftime("%d-%b-%y") if s["review"] else "—"
-        } for s in segments]
+        # Compact table of plotted items (actual + expected)
+        st.markdown("**Plotted Revisions and Expected Dates (compact table)**")
+        tbl_rows = []
+        for s in actual_segments:
+            tbl_rows.append({
+                "Document Title": s["title"],
+                "Type": "Actual",
+                "Revision": s["rev"],
+                "Submission": s["submit"].strftime("%d-%b-%y") if pd.notna(s["submit"]) else "—",
+                "Review": s["review"].strftime("%d-%b-%y") if s["review"] else "—",
+                "IFR Exp": "—",
+                "IFA Exp": "—",
+                "IFT Exp": "—"
+            })
+        for s in expected_segments:
+            y = y_positions.get(s["title"])
+            if y is None:
+                continue
+            tbl_rows.append({
+                "Document Title": s["title"],
+                "Type": "Expected",
+                "Revision": "—",
+                "Submission": "—",
+                "Review": "—",
+                "IFR Exp": s["ifr_exp"].strftime("%d-%b-%y") if pd.notna(s["ifr_exp"]) else "—",
+                "IFA Exp": s["ifa_exp"].strftime("%d-%b-%y") if s["ifa_exp"] else "—",
+                "IFT Exp": s["ift_exp"].strftime("%d-%b-%y") if s["ift_exp"] else "—"
+            })
         st.dataframe(pd.DataFrame(tbl_rows))
 
 if __name__ == "__main__":

@@ -1145,6 +1145,15 @@ def main():
                                           xy=(x, y), xytext=(x_jitter, y_offset),
                                           textcoords='offset points', ha='center', va='top',
                                           fontsize=font_size, bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85))
+        from matplotlib.lines import Line2D
+        
+        # Legend entries for markers only (dot = submission, square = review)
+        extra_legend = [
+            Line2D([0], [0], marker=submit_marker, linestyle='None', color='none',
+                   markerfacecolor='#1f77b4', markeredgecolor='#1f77b4', markersize=7, label='Submission'),
+            Line2D([0], [0], marker=review_marker, linestyle='None', color='none',
+                   markerfacecolor='#1f77b4', markeredgecolor='#1f77b4', markersize=7, label='Review'),
+        ]
 
         ax_t.set_yticks([y_positions[t] for t in titles])
         ax_t.set_yticklabels(titles, fontsize=8)
@@ -1153,7 +1162,9 @@ def main():
         ax_t.set_title("Submission → Review Timeline with Expected Dates (by Document Title)", fontsize=11)
         if show_grid:
             ax_t.grid(True, axis='x', linestyle='--', alpha=0.35)
-        ax_t.legend(fontsize=8)
+        handles, labels = ax_t.get_legend_handles_labels()
+        ax_t.legend(handles=extra_legend + handles, fontsize=8, loc='upper left')
+
         plt.xticks(rotation=45)
         plt.tight_layout()
         st.pyplot(fig_t)

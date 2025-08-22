@@ -225,7 +225,7 @@ def main():
             return
 
         start_date = valid_dates.min()
-        today_date = pd.to_datetime("2025-08-15").normalize()  # Hardcoded to match the scenario date
+        today_date = pd.Timestamp.today().normalize()  # Hardcoded to match the scenario date
         total_mh = df["Man Hours "].sum()
 
         # Validate timeline

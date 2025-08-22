@@ -423,18 +423,28 @@ def main():
             ax.annotate(
                 f"Recovery End\n{recovery_end_date.strftime('%d-%b-%Y')}",
                 xy=(recovery_end_date, (y_expected[-1] if PERCENTAGE_VIEW else final_expected) * 0.3),
-                xytext=(10, 10), textcoords="offset points", color=end_date_color,
+                xytext=(10,10), textcoords="offset points", color=end_date_color,
                 bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
                 fontsize=8, arrowprops=dict(arrowstyle="->", color=end_date_color)
             )
 
         delay_today = expected_today - actual_today
-        delay_pct = delay_today/final_expected*100 if final_expected > 0 else 0
-        delay_text = f"Current Delay: {delay_pct:.1f}%" if PERCENTAGE_VIEW else f"Current Delay: {delay_today:,.1f} MH\n({delay_pct:.1f}%)"
+        delay_pct = (delay_today / final_expected * 100) if final_expected > 0 else 0
         
+        # Always show Actual Progress as a percentage (even if the chart is in MH)
+        actual_pct = (y_actual[today_idx] if PERCENTAGE_VIEW
+                      else ((actual_today / total_mh * 100) if total_mh > 0 else 0))
+        
+        delay_text = (
+            f"Actual Progress: {actual_pct:.1f}%\n"
+            + (f"Current Delay: {delay_pct:.1f}%"
+               if PERCENTAGE_VIEW
+               else f"Current Delay: {delay_today:,.1f} MH\n({delay_pct:.1f}%)")
+        )
+
         ax.annotate(
             delay_text, xy=(today_date, (y_actual[today_idx] + y_expected[expected_today_idx])/2),
-            xytext=(10, -50), textcoords="offset points", color=today_color,
+            xytext=(10, -10), textcoords="offset points", color=today_color,
             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.7),
             arrowprops=dict(arrowstyle="->", color=today_color), ha="left", fontsize=8
         )
@@ -523,7 +533,7 @@ def main():
         # --------------------------
         total_actual = df["Actual_Progress_At_Final"].sum()
         overall_pct = total_actual / total_mh if total_mh > 0 else 0
-        ifr_delivered = df["Issued by EPC"].notna().sum()
+        ifr_delivered = ((df["Issued by EPC"].notna()) & (df["Issued by EPC"] <= today_date)).sum()
         total_docs = len(df)
         ifr_values = [ifr_delivered, total_docs - ifr_delivered]
 

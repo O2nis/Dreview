@@ -858,7 +858,7 @@ def main():
 
     with tab2:
         # =====================================================================================
-        # TAB 2 — REVIEW TIMELINE (doc titles only; 2-line tags; selective labeling)
+        # TAB 2 — REVIEW TIMELINE (doc titles with status in brackets; 2-line tags; selective labeling)
         # =====================================================================================
         file_extension = CSV_INPUT_PATH.name.split('.')[-1].lower()
         if file_extension not in ['xlsx', 'xls']:
@@ -986,9 +986,12 @@ def main():
             st.warning("No valid expected dates found for selected documents in the first sheet.")
             # Proceed with actual segments only
 
-        # y-axis (one row per document title)
+        # y-axis (one row per document title with status in brackets)
+        status_map = df.set_index("Document Title")["Status"].to_dict()
         titles = sorted(set(s["title"] for s in actual_segments))
         y_positions = {t: i for i, t in enumerate(titles)}
+        # Append status to titles for y-axis labels
+        title_labels = [f"{t} [{status_map.get(t, 'Unknown')}]" for t in titles]
 
         # Identify first and last points to label for each document
         label_points = {}
@@ -1155,6 +1158,7 @@ def main():
                                           xy=(x, y), xytext=(x_jitter, y_offset),
                                           textcoords='offset points', ha='center', va='top',
                                           fontsize=font_size, bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85))
+
         from matplotlib.lines import Line2D
         
         # Legend entries for markers only (dot = submission, square = review)
@@ -1166,10 +1170,10 @@ def main():
         ]
 
         ax_t.set_yticks([y_positions[t] for t in titles])
-        ax_t.set_yticklabels(titles, fontsize=8)
+        ax_t.set_yticklabels(title_labels, fontsize=8)
         ax_t.set_ylim(-0.6, len(titles) - 0.4)
         ax_t.set_xlabel("Date", fontsize=9)
-        ax_t.set_title("Submission → Review Timeline with Expected Dates (by Document Title)", fontsize=11)
+        ax_t.set_title("Submission → Review Timeline with Expected Dates", fontsize=11)
         if show_grid:
             ax_t.grid(True, axis='x', linestyle='--', alpha=0.35)
         handles, labels = ax_t.get_legend_handles_labels()

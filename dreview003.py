@@ -715,14 +715,18 @@ def main():
         # 12) FINAL MILESTONE + STATUS STACKED BAR
         # --------------------------
         def get_final_milestone(row):
-            if pd.notna(row["Reply By EPC"]):
+        # New rule: if Reply By EPC is present AND Flag == 1 → Finalized
+            if pd.notna(row["Reply By EPC"]) and int(row.get("Flag", 0)) == 1:
+                return "Finalized"
+            elif pd.notna(row["Reply By EPC"]):
                 return "Reply By EPC"
             elif pd.notna(row["Review By OE"]):
-                return "Review By OE"
+               return "Review By OE"
             elif pd.notna(row["Issued by EPC"]):
-                return "Issued by EPC"
+               return "Issued by EPC"
             else:
-                return "NO ISSUANCE"
+               return "NO ISSUANCE"
+
         df["FinalMilestone"] = df.apply(get_final_milestone, axis=1)
         st.subheader("Documents by Final Milestone (Stacked by Status)")
         group_df = (
@@ -731,7 +735,9 @@ def main():
               .reset_index(name="Count")
         )
         pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
-        pivoted = pivoted.reindex(["Issued by EPC","Review By OE","Reply By EPC"]).dropna(how="all")
+        order = ["Issued by EPC", "Review By OE", "Reply By EPC", "Finalized"]
+        pivoted = pivoted.reindex(order).dropna(how="all")
+
         fig_status, ax_status = plt.subplots(figsize=(7,5))
         pivoted.plot(kind="bar", stacked=True, ax=ax_status)
         for container in ax_status.containers:

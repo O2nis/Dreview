@@ -88,10 +88,10 @@ def main():
         # ----------------------------------------------------------------
         # A) TEMPLATE CSV DOWNLOAD (with first 3 rows + headers)
         # ----------------------------------------------------------------
-        TEMPLATE_CONTENT = """ID,Discipline,Area,Document Title,Project Indentifer,Originator,Document Number,Document Type ,Counter ,Revision,Area code,Disc,Category,Transmittal Code,Comment Sheet OE,Comment Sheet EPC,Schedule [Days],Issued by EPC,Issuance Expected,Review By OE,Expected review,Reply By EPC,Final Issuance Expected,Man Hours ,Status,CS rev,Flag
-1,General,General,Overall site layout,KFE,SC,0001,MA,00,A,GEN,GN,DRG,"KFE-SC-MOEM-T-0052-AO-PV System Analysis Report, Project Quality Management Plan and TCO.",MOEM-TCO-CI-0017-Rev_00_FI,MOEM-TCO-CI-0017-Rev_00_CE,10,4-Apr-25,,4-Apr-25, , , ,10,CO,1,0
-2,General,General,Overall Single Line Diagram (PV plant + interconnection facilities),KFE,SC,0002,MA,00,A,GEN,GN,DRG,,,,10,18-Mar-25,,18-Mar-25, , , ,10,CO,1,0
-3,PV,General,PVsyst yield estimates,KFE,SC,0003,MA,00,A,GEN,PV,DRG,,,,10,,,, , , ,10,FN,0,0
+        TEMPLATE_CONTENT = """ID,Discipline,Area,Document Title,Project Indentifer,Originator,Document Number,Document Type ,Counter ,Revision,Area code,Disc,Category,Transmittal Code,Comment Sheet OE,Comment Sheet EPC,Schedule [Days],Issued by EPC,Issuance Expected,Review By OE,Expected review,Reply By EPC,Final Issuance Expected,Review1,ReSub1,Review2,ReSub2,Review3,ReSub3,Review4,ReSub4,Review5,ReSub5,Man Hours ,Status,CS rev,Flag
+1,General,General,Overall site layout,KFE,SC,0001,MA,00,A,GEN,GN,DRG,"KFE-SC-MOEM-T-0052-AO-PV System Analysis Report, Project Quality Management Plan and TCO.",MOEM-TCO-CI-0017-Rev_00_FI,MOEM-TCO-CI-0017-Rev_00_CE,10,4-Apr-25,,4-Apr-25, , , ,,,,,,,,10,CO,1,0
+2,General,General,Overall Single Line Diagram (PV plant + interconnection facilities),KFE,SC,0002,MA,00,A,GEN,GN,DRG,,,,10,18-Mar-25,,18-Mar-25, , , ,,,,,,,,10,CO,1,0
+3,PV,General,PVsyst yield estimates,KFE,SC,0003,MA,00,A,GEN,PV,DRG,,,,10,,,, , , ,,,,,,,,10,FN,0,0
 """
 
         st.subheader("Download CSV Template")
@@ -167,14 +167,18 @@ def main():
         else:
             df = pd.read_csv(CSV_INPUT_PATH)
 
-        df.columns = [
+        # Define the full column list including the 10 new columns
+        expected_columns = [
             "ID", "Discipline", "Area", "Document Title", "Project Indentifer", "Originator",
             "Document Number", "Document Type ", "Counter ", "Revision", "Area code",
             "Disc", "Category", "Transmittal Code", "Comment Sheet OE", "Comment Sheet EPC",
             "Schedule [Days]", "Issued by EPC", "Issuance Expected", "Review By OE",
-            "Expected review", "Reply By EPC", "Final Issuance Expected", "Man Hours ",
-            "Status", "CS rev", "Flag"
+            "Expected review", "Reply By EPC", "Final Issuance Expected",
+            "Review1", "ReSub1", "Review2", "ReSub2", "Review3", "ReSub3",
+            "Review4", "ReSub4", "Review5", "ReSub5",
+            "Man Hours ", "Status", "CS rev", "Flag"
         ]
+        df.columns = expected_columns[:len(df.columns)]  # Assign only up to the number of columns present
 
         if IGNORE_STATUS.strip():
             statuses_to_exclude = [s.strip() for s in IGNORE_STATUS.split(',') if s.strip()]

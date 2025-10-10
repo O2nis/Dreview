@@ -78,8 +78,40 @@ def normalize_header(h):
     """Normalize header by removing extra spaces and converting to lowercase."""
     return ' '.join(str(h).lower().split())
 
+def filter_by_column_and_word(df, column, search_word):
+    """
+    Filter DataFrame rows where the specified column contains the search word (case-insensitive).
+    Returns the filtered DataFrame or the original if inputs are invalid.
+    """
+    if not column or not search_word or column not in df.columns:
+        return df
+    try:
+        # Convert column to string and perform case-insensitive search
+        mask = df[column].astype(str).str.contains(search_word, case=False, na=False)
+        filtered_df = df[mask]
+        if filtered_df.empty:
+            st.warning(f"No rows found with '{search_word}' in column '{column}'.")
+        else:
+            st.info(f"Filtered to {len(filtered_df)} rows containing '{search_word}' in column '{column}'.")
+        return filtered_df
+    except Exception as e:
+        st.error(f"Error filtering by '{search_word}' in column '{column}': {str(e)}")
+        return df
+
 def main():
     st.set_page_config(page_title="S-Curve Analysis", layout="wide")
+
+    # Define expected columns at the start
+    expected_columns = [
+        "ID", "Discipline", "Area", "Document Title", "Project Indentifer", "Originator",
+        "Document Number", "Document Type ", "Counter ", "Revision", "Area code",
+        "Disc", "Category", "Transmittal Code", "Comment Sheet OE", "Comment Sheet EPC",
+        "Schedule [Days]", "Issued by EPC", "Issuance Expected", "Review By OE",
+        "Expected review", "Reply By EPC", "Final Issuance Expected",
+        "Review1", "ReSub1", "Review2", "ReSub2", "Review3", "ReSub3",
+        "Review4", "ReSub4", "Review5", "ReSub5",
+        "Man Hours ", "Status", "CS rev", "Flag"
+    ]
 
     # Create tabs
     tab1, tab2 = st.tabs(["S-Curve Analysis", "Review Timeline"])
@@ -116,6 +148,12 @@ def main():
         IFT_DELTA_DAYS = st.sidebar.number_input("Days to add for Final Issuance Expected", value=5, step=1)
 
         IGNORE_STATUS = st.sidebar.text_input("Status to Ignore (comma-separated, case-sensitive, leave blank to include all)", value="")
+        
+        # New column and word filter inputs
+        st.sidebar.markdown("### Filter by Column Content")
+        filter_column = st.sidebar.selectbox("Select Column to Filter", options=["None"] + expected_columns, index=0)
+        search_word = st.sidebar.text_input("Enter Search Word", value="")
+
         PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
         INCLUDE_COMPLETED = st.sidebar.checkbox("Include Completed Documents (Flag=1) in Delays Table", value=True)
 
@@ -167,18 +205,15 @@ def main():
         else:
             df = pd.read_csv(CSV_INPUT_PATH)
 
-        # Define the full column list including the 10 new columns
-        expected_columns = [
-            "ID", "Discipline", "Area", "Document Title", "Project Indentifer", "Originator",
-            "Document Number", "Document Type ", "Counter ", "Revision", "Area code",
-            "Disc", "Category", "Transmittal Code", "Comment Sheet OE", "Comment Sheet EPC",
-            "Schedule [Days]", "Issued by EPC", "Issuance Expected", "Review By OE",
-            "Expected review", "Reply By EPC", "Final Issuance Expected",
-            "Review1", "ReSub1", "Review2", "ReSub2", "Review3", "ReSub3",
-            "Review4", "ReSub4", "Review5", "ReSub5",
-            "Man Hours ", "Status", "CS rev", "Flag"
-        ]
+        # Assign column names
         df.columns = expected_columns[:len(df.columns)]  # Assign only up to the number of columns present
+
+        # Apply column and word filter
+        if filter_column != "None" and search_word.strip():
+            df = filter_by_column_and_word(df, filter_column, search_word.strip())
+            if df.empty:
+                st.error("No rows remain after applying column filter. Please adjust the search word or column.")
+                return
 
         if IGNORE_STATUS.strip():
             statuses_to_exclude = [s.strip() for s in IGNORE_STATUS.split(',') if s.strip()]
@@ -590,10 +625,10 @@ def main():
         n_ticks = max(1, len(ind) // 5)
         ax_stack.set_xticks(ind[::n_ticks])
         ax_stack.set_xticklabels([actual_timeline[i].strftime('%d-%b-%Y') for i in range(0, len(actual_timeline), n_ticks)], rotation=45, ha='right')
-        ax_stack.set_title("Actual Progress Breakdown", fontsize=10)
-        ax_stack.set_xlabel("Date", fontsize=9)
-        ax_stack.set_ylabel(y_label_stack, fontsize=9)
-        ax_stack.legend(fontsize=8)
+        ax_stack.set_title("Actual Progress Breakdown", fontsize=9)
+        ax_stack.set_xlabel("Date", fontsize=8)
+        ax_stack.set_ylabel(y_label_stack, fontsize=8)
+        ax_stack.legend(fontsize=7)
         if show_grid:
             ax_stack.grid(True)
         plt.tight_layout()
@@ -766,11 +801,11 @@ def main():
         # 12) FINAL MILESTONE + STATUS STACKED BAR
         # --------------------------
         def get_final_milestone(row):
-            if pd.notna(row["Reply By EPC"]) and int(row.get("Flag", 0)) == 1:
+            if pd.notna(row["Reply By EPC"]) and pd.notna(row["Review By OE"]) and pd.notna(row["Issued by EPC"]) and int(row.get("Flag", 0)) == 1:
                 return "Finalized"
-            elif pd.notna(row["Reply By EPC"]):
+            elif pd.notna(row["Reply By EPC"]) and pd.notna(row["Review By OE"]) and pd.notna(row["Issued by EPC"]):
                 return "Reply By EPC"
-            elif pd.notna(row["Review By OE"]):
+            elif pd.notna(row["Review By OE"]) and pd.notna(row["Issued by EPC"]):
                 return "Review By OE"
             elif pd.notna(row["Issued by EPC"]):
                 return "Issued by EPC"
@@ -785,7 +820,7 @@ def main():
               .reset_index(name="Count")
         )
         pivoted = group_df.pivot(index="FinalMilestone", columns="Status", values="Count").fillna(0)
-        order = ["Issued by EPC", "Review By OE", "Reply By EPC", "Finalized"]
+        order = ["NO ISSUANCE", "Issued by EPC", "Review By OE", "Reply By EPC", "Finalized"]
         pivoted = pivoted.reindex(order).dropna(how="all")
 
         fig_status, ax_status = plt.subplots(figsize=(7,5))
@@ -986,6 +1021,13 @@ def main():
         if df_sel.empty:
             st.warning(f"No rows have a non-null **{first_rev_col}** (initial submission). Nothing to plot.")
             st.stop()
+
+        # Apply column and word filter to historical data
+        if filter_column != "None" and search_word.strip():
+            df_sel = filter_by_column_and_word(df_sel, filter_column, search_word.strip())
+            if df_sel.empty:
+                st.error("No rows remain in 'Review Historical record' after applying column filter.")
+                st.stop()
 
         # Build display label: use **Document Title only** on the y-axis to make space
         title_candidates = ["Document Title", "Title", base_cols[min(3, len(base_cols)-1)]]

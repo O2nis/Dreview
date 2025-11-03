@@ -78,198 +78,28 @@ def normalize_header(h):
     """Normalize header by removing extra spaces and converting to lowercase."""
     return ' '.join(str(h).lower().split())
 
-def filter_by_column_and_word(df, column, search_word):
-    """
-    Filter DataFrame rows where the specified column contains the search word (case-insensitive).
-    Returns the filtered DataFrame or the original if inputs are invalid.
-    """
-    if not column or not search_word or column not in df.columns:
-        return df
-    try:
-        # Convert column to string and perform case-insensitive search
-        mask = df[column].astype(str).str.contains(search_word, case=False, na=False)
-        filtered_df = df[mask]
-        if filtered_df.empty:
-            st.warning(f"No rows found with '{search_word}' in column '{column}'.")
-        else:
-            st.info(f"Filtered to {len(filtered_df)} rows containing '{search_word}' in column '{column}'.")
-        return filtered_df
-    except Exception as e:
-        st.error(f"Error filtering by '{search_word}' in column '{column}': {str(e)}")
-        return df
+def get_final_milestone(row):
+    issued = pd.notna(row["Issued by EPC"])
+    reviewed = pd.notna(row["Review By OE"])
+    replied = pd.notna(row["Reply By EPC"])
+    flag = int(row.get("Flag", 0)) == 1
+
+    if replied and reviewed and issued and flag:
+        return "Finalized"
+    elif replied and reviewed and issued:
+        return "Reply By EPC"
+    elif reviewed and issued:
+        return "Review By OE"
+    elif issued:
+        return "Issued by EPC"
+    else:
+        return "NO ISSUANCE"
 
 def main():
     st.set_page_config(page_title="S-Curve Analysis", layout="wide")
 
-    # Define expected columns at the start
-    expected_columns = [
-        "ID", "Discipline", "Area", "Document Title", "Project Indentifer", "Originator",
-        "Document Number", "Document Type ", "Counter ", "Revision", "Area code",
-        "Disc", "Category", "Transmittal Code", "Comment Sheet OE", "Comment Sheet EPC",
-        "Schedule [Days]", "Issued by EPC", "Issuance Expected", "Review By OE",
-        "Expected review", "Reply By EPC", "Final Issuance Expected",
-        "Review1", "ReSub1", "Review2", "ReSub2", "Review3", "ReSub3",
-        "Review4", "ReSub4", "Review5", "ReSub5",
-        "Man Hours ", "Status", "CS rev", "Flag"
-    ]
-
     # Create tabs
     tab1, tab2 = st.tabs(["S-Curve Analysis", "Review Timeline"])
-
-    # --------------------------
-    # 1) SIDEBAR INPUTS
-    # --------------------------
-    st.sidebar.header("Configuration")
-    CSV_INPUT_PATH = st.sidebar.file_uploader("Upload Input File", type=["csv", "xlsx", "xls"])
-    INITIAL_DATE = st.sidebar.date_input("Initial Date for Expected Calculations", value=pd.to_datetime("2024-08-01"))
-    IFR_WEIGHT = st.sidebar.number_input("Issued By EPC Weight", value=0.40, step=0.05)
-    IFA_WEIGHT = st.sidebar.number_input("Review By OE Weight", value=0.30, step=0.05)
-    IFT_WEIGHT = st.sidebar.number_input("Reply By EPC Weight", value=0.30, step=0.05)
-    RECOVERY_FACTOR = st.sidebar.number_input("Recovery Factor", value=0.75, step=0.05)
-    IFA_DELTA_DAYS = st.sidebar.number_input("Days to add for Expected Review", value=10, step=1)
-    IFT_DELTA_DAYS = st.sidebar.number_input("Days to add for Final Issuance Expected", value=5, step=1)
-
-    IGNORE_STATUS = st.sidebar.text_input("Status to Ignore (comma-separated, case-sensitive, leave blank to include all)", value="")
-    
-    # New column and word filter inputs
-    st.sidebar.markdown("### Filter by Column Content")
-    filter_column = st.sidebar.selectbox("Select Column to Filter", options=["None"] + expected_columns, index=0)
-    search_word = st.sidebar.text_input("Enter Search Word", value="")
-
-    PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
-    INCLUDE_COMPLETED = st.sidebar.checkbox("Include Completed Documents (Flag=1) in Delays Table", value=True)
-
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### Visualization Settings")
-    seaborn_style = st.sidebar.selectbox(
-        "Seaborn Style",
-        ["darkgrid", "whitegrid", "dark", "white", "ticks"],
-        index=1
-    )
-    seaborn_context = st.sidebar.selectbox(
-        "Seaborn Context",
-        ["paper", "notebook", "talk", "poster"],
-        index=1
-    )
-    color_scheme = st.sidebar.selectbox(
-        "Color Scheme (Bar/Donut/Pie Charts)",
-        ["Standard", "Shades of Blue", "Shades of Green", "Seaborn Palette"],
-        index=1
-    )
-    seaborn_palette = st.sidebar.selectbox(
-        "Seaborn Palette (if Seaborn Palette selected)",
-        ["deep", "muted", "bright", "pastel", "dark", "colorblind", "Set1", "Set2", "Set3"],
-        index=0
-    )
-    font_scale = st.sidebar.slider("Font Scale", min_value=0.5, max_value=2.0, value=1.0, step=0.1)
-    show_grid = st.sidebar.checkbox("Show Grid Lines", value=True)
-
-    sns.set_style(seaborn_style)
-    sns.set_context(seaborn_context, font_scale=font_scale)
-
-    st.sidebar.markdown("### S-Curve Color Scheme")
-    actual_color = st.sidebar.color_picker("Actual Progress Color", "#1f77b4")
-    expected_color = st.sidebar.color_picker("Expected Progress Color", "#ff7f0e")
-    projected_color = st.sidebar.color_picker("Projected Recovery Color", "#2ca02c")
-    today_color = st.sidebar.color_picker("Today Line Color", "#000000")
-    end_date_color = st.sidebar.color_picker("End Date Line Color", "#d62728")
-
-    if CSV_INPUT_PATH is None:
-        st.warning("Please upload your input CSV or Excel file or download the template above.")
-        return
-
-    # --------------------------
-    # 2) LOAD CSV OR EXCEL & PREP DATA WITH ROBUST DATE PARSING
-    # --------------------------
-    file_extension = CSV_INPUT_PATH.name.split('.')[-1].lower()
-    if file_extension in ['xlsx', 'xls']:
-        df = pd.read_excel(CSV_INPUT_PATH)
-    else:
-        df = pd.read_csv(CSV_INPUT_PATH)
-
-    # Assign column names
-    df.columns = expected_columns[:len(df.columns)]  # Assign only up to the number of columns present
-
-    # Apply column and word filter
-    if filter_column != "None" and search_word.strip():
-        df = filter_by_column_and_word(df, filter_column, search_word.strip())
-        if df.empty:
-            st.error("No rows remain after applying column filter. Please adjust the search word or column.")
-            return
-
-    if IGNORE_STATUS.strip():
-        statuses_to_exclude = [s.strip() for s in IGNORE_STATUS.split(',') if s.strip()]
-        initial_len = len(df)
-        df = df[~df["Status"].isin(statuses_to_exclude)]
-        filtered_len = len(df)
-        if filtered_len < initial_len:
-            st.info(f"Filtered out {initial_len - filtered_len} rows with Status in: {', '.join(statuses_to_exclude)}")
-        if filtered_len == 0:
-            st.error(f"All rows have Status in exclusion list. No data remains after filtering.")
-            return
-
-    date_columns = ["Issued by EPC", "Review By OE", "Reply By EPC", "Issuance Expected", "Expected review", "Final Issuance Expected"]
-    additional_date_cols = ["Review1", "ReSub1", "Review2", "ReSub2", "Review3", "ReSub3", "Review4", "ReSub4", "Review5", "ReSub5"]
-    date_columns += additional_date_cols
-    for col in date_columns:
-        if col in df.columns:
-            df[col] = df[col].apply(robust_parse_date)
-            na_count = df[col].isna().sum()
-            if na_count > 0:
-                st.warning(f"Column '{col}' has {na_count} dates that couldn't be parsed")
-
-    df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
-    df["Man Hours "] = pd.to_numeric(df["Man Hours "], errors="coerce").fillna(0)
-    df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
-
-    df["Issuance Expected"] = pd.Timestamp(INITIAL_DATE) + pd.to_timedelta(df["Schedule [Days]"], unit="D")
-    df["Expected review"] = df["Issuance Expected"] + dt.timedelta(days=IFA_DELTA_DAYS)
-    df["Final Issuance Expected"] = df["Expected review"] + dt.timedelta(days=IFT_DELTA_DAYS)
-    df["Final Issuance Expected"] = pd.to_datetime(df["Final Issuance Expected"], errors='coerce')
-
-    ift_expected_max = df["Final Issuance Expected"].dropna().max()
-    if pd.isna(ift_expected_max):
-        st.warning("No valid Final Issuance Expected dates found. Checking other date columns.")
-        date_cols = ["Issuance Expected", "Expected review", "Final Issuance Expected", 
-                    "Issued by EPC", "Review By OE", "Reply By EPC"]
-        all_dates = df[date_cols].values.ravel()
-        valid_dates = pd.Series(all_dates).dropna()
-        if valid_dates.empty:
-            st.error("No valid milestone dates found in any date columns. Cannot generate S-Curve.")
-            return
-        ift_expected_max = valid_dates.max()
-    else:
-        date_cols = ["Issuance Expected", "Expected review", "Final Issuance Expected", 
-                    "Issued by EPC", "Review By OE", "Reply By EPC"]
-        all_dates = df[date_cols].values.ravel()
-        valid_dates = pd.Series(all_dates).dropna()
-
-    if valid_dates.empty:
-        st.error("No valid dates found in any milestone columns. Cannot proceed with S-Curve plotting.")
-        return
-
-    start_date = valid_dates.min()
-    today_date = pd.Timestamp("2025-10-10").normalize()  # Updated to October 10, 2025
-    total_mh = df["Man Hours "].sum()
-
-    # Validate timeline
-    if start_date > today_date:
-        st.warning(f"Start date ({start_date.strftime('%d-%b-%Y')}) is after today ({today_date.strftime('%d-%b-%Y')}). Using single point timeline.")
-        actual_timeline = [today_date]
-    else:
-        actual_timeline = pd.date_range(start=start_date, end=today_date, freq='W')
-        if len(actual_timeline) == 0:
-            st.warning("Actual timeline is empty. Using single point at today.")
-            actual_timeline = [today_date]
-
-    if start_date > ift_expected_max:
-        st.warning(f"Start date ({start_date.strftime('%d-%b-%Y')}) is after max expected date ({ift_expected_max.strftime('%d-%b-%Y')}). Using single point timeline.")
-        expected_timeline = [ift_expected_max]
-    else:
-        expected_timeline = pd.date_range(start=start_date, end=ift_expected_max, freq='W')
-        if len(expected_timeline) == 0:
-            st.warning("Expected timeline is empty. Using single point at max expected date.")
-            expected_timeline = [ift_expected_max]
 
     with tab1:
         # ----------------------------------------------------------------
@@ -288,6 +118,155 @@ def main():
             file_name="EDDR_template.csv",
             mime="text/csv"
         )
+
+        # --------------------------
+        # 1) SIDEBAR INPUTS
+        # --------------------------
+        st.sidebar.header("Configuration")
+        CSV_INPUT_PATH = st.sidebar.file_uploader("Upload Input File", type=["csv", "xlsx", "xls"])
+        INITIAL_DATE = st.sidebar.date_input("Initial Date for Expected Calculations", value=pd.to_datetime("2024-08-01"))
+        IFR_WEIGHT = st.sidebar.number_input("Issued By EPC Weight", value=0.40, step=0.05)
+        IFA_WEIGHT = st.sidebar.number_input("Review By OE Weight", value=0.30, step=0.05)
+        IFT_WEIGHT = st.sidebar.number_input("Reply By EPC Weight", value=0.30, step=0.05)
+        RECOVERY_FACTOR = st.sidebar.number_input("Recovery Factor", value=0.75, step=0.05)
+        IFA_DELTA_DAYS = st.sidebar.number_input("Days to add for Expected Review", value=10, step=1)
+        IFT_DELTA_DAYS = st.sidebar.number_input("Days to add for Final Issuance Expected", value=5, step=1)
+
+        IGNORE_STATUS = st.sidebar.text_input("Status to Ignore (comma-separated, case-sensitive, leave blank to include all)", value="")
+        PERCENTAGE_VIEW = st.sidebar.checkbox("Show values as percentage of total", value=False)
+        INCLUDE_COMPLETED = st.sidebar.checkbox("Include Completed Documents (Flag=1) in Delays Table", value=True)
+
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### Visualization Settings")
+        seaborn_style = st.sidebar.selectbox(
+            "Seaborn Style",
+            ["darkgrid", "whitegrid", "dark", "white", "ticks"],
+            index=1
+        )
+        seaborn_context = st.sidebar.selectbox(
+            "Seaborn Context",
+            ["paper", "notebook", "talk", "poster"],
+            index=1
+        )
+        color_scheme = st.sidebar.selectbox(
+            "Color Scheme (Bar/Donut/Pie Charts)",
+            ["Standard", "Shades of Blue", "Shades of Green", "Seaborn Palette"],
+            index=1
+        )
+        seaborn_palette = st.sidebar.selectbox(
+            "Seaborn Palette (if Seaborn Palette selected)",
+            ["deep", "muted", "bright", "pastel", "dark", "colorblind", "Set1", "Set2", "Set3"],
+            index=0
+        )
+        font_scale = st.sidebar.slider("Font Scale", min_value=0.5, max_value=2.0, value=1.0, step=0.1)
+        show_grid = st.sidebar.checkbox("Show Grid Lines", value=True)
+
+        sns.set_style(seaborn_style)
+        sns.set_context(seaborn_context, font_scale=font_scale)
+
+        st.sidebar.markdown("### S-Curve Color Scheme")
+        actual_color = st.sidebar.color_picker("Actual Progress Color", "#1f77b4")
+        expected_color = st.sidebar.color_picker("Expected Progress Color", "#ff7f0e")
+        projected_color = st.sidebar.color_picker("Projected Recovery Color", "#2ca02c")
+        today_color = st.sidebar.color_picker("Today Line Color", "#000000")
+        end_date_color = st.sidebar.color_picker("End Date Line Color", "#d62728")
+
+        if CSV_INPUT_PATH is None:
+            st.warning("Please upload your input CSV or Excel file or download the template above.")
+            return
+
+        # --------------------------
+        # 2) LOAD CSV OR EXCEL & PREP DATA WITH ROBUST DATE PARSING
+        # --------------------------
+        file_extension = CSV_INPUT_PATH.name.split('.')[-1].lower()
+        if file_extension in ['xlsx', 'xls']:
+            df = pd.read_excel(CSV_INPUT_PATH)
+        else:
+            df = pd.read_csv(CSV_INPUT_PATH)
+
+        # Define the full column list including the 10 new columns
+        expected_columns = [
+            "ID", "Discipline", "Area", "Document Title", "Project Indentifer", "Originator",
+            "Document Number", "Document Type ", "Counter ", "Revision", "Area code",
+            "Disc", "Category", "Transmittal Code", "Comment Sheet OE", "Comment Sheet EPC",
+            "Schedule [Days]", "Issued by EPC", "Issuance Expected", "Review By OE",
+            "Expected review", "Reply By EPC", "Final Issuance Expected",
+            "Review1", "ReSub1", "Review2", "ReSub2", "Review3", "ReSub3",
+            "Review4", "ReSub4", "Review5", "ReSub5",
+            "Man Hours ", "Status", "CS rev", "Flag"
+        ]
+        df.columns = expected_columns[:len(df.columns)]  # Assign only up to the number of columns present
+
+        if IGNORE_STATUS.strip():
+            statuses_to_exclude = [s.strip() for s in IGNORE_STATUS.split(',') if s.strip()]
+            initial_len = len(df)
+            df = df[~df["Status"].isin(statuses_to_exclude)]
+            filtered_len = len(df)
+            if filtered_len < initial_len:
+                st.info(f"Filtered out {initial_len - filtered_len} rows with Status in: {', '.join(statuses_to_exclude)}")
+            if filtered_len == 0:
+                st.error(f"All rows have Status in exclusion list. No data remains after filtering.")
+                return
+
+        date_columns = ["Issued by EPC", "Review By OE", "Reply By EPC", "Issuance Expected", "Expected review", "Final Issuance Expected"]
+        for col in date_columns:
+            df[col] = df[col].apply(robust_parse_date)
+            na_count = df[col].isna().sum()
+            if na_count > 0:
+                st.warning(f"Column '{col}' has {na_count} dates that couldn't be parsed")
+
+        df["Schedule [Days]"] = pd.to_numeric(df["Schedule [Days]"], errors="coerce").fillna(0)
+        df["Man Hours "] = pd.to_numeric(df["Man Hours "], errors="coerce").fillna(0)
+        df["Flag"] = pd.to_numeric(df["Flag"], errors="coerce").fillna(0)
+
+        df["Issuance Expected"] = pd.Timestamp(INITIAL_DATE) + pd.to_timedelta(df["Schedule [Days]"], unit="D")
+        df["Expected review"] = df["Issuance Expected"] + dt.timedelta(days=IFA_DELTA_DAYS)
+        df["Final Issuance Expected"] = df["Expected review"] + dt.timedelta(days=IFT_DELTA_DAYS)
+        df["Final Issuance Expected"] = pd.to_datetime(df["Final Issuance Expected"], errors='coerce')
+
+        ift_expected_max = df["Final Issuance Expected"].dropna().max()
+        if pd.isna(ift_expected_max):
+            st.warning("No valid Final Issuance Expected dates found. Checking other date columns.")
+            date_cols = ["Issuance Expected", "Expected review", "Final Issuance Expected", 
+                        "Issued by EPC", "Review By OE", "Reply By EPC"]
+            all_dates = df[date_cols].values.ravel()
+            valid_dates = pd.Series(all_dates).dropna()
+            if valid_dates.empty:
+                st.error("No valid milestone dates found in any date columns. Cannot generate S-Curve.")
+                return
+            ift_expected_max = valid_dates.max()
+        else:
+            date_cols = ["Issuance Expected", "Expected review", "Final Issuance Expected", 
+                        "Issued by EPC", "Review By OE", "Reply By EPC"]
+            all_dates = df[date_cols].values.ravel()
+            valid_dates = pd.Series(all_dates).dropna()
+
+        if valid_dates.empty:
+            st.error("No valid dates found in any milestone columns. Cannot proceed with S-Curve plotting.")
+            return
+
+        start_date = valid_dates.min()
+        today_date = pd.Timestamp.today().normalize()  # Uses actual current date
+        total_mh = df["Man Hours "].sum()
+
+        # Validate timeline
+        if start_date > today_date:
+            st.warning(f"Start date ({start_date.strftime('%d-%b-%Y')}) is after today ({today_date.strftime('%d-%b-%Y')}). Using single point timeline.")
+            actual_timeline = [today_date]
+        else:
+            actual_timeline = pd.date_range(start=start_date, end=today_date, freq='W')
+            if len(actual_timeline) == 0:
+                st.warning("Actual timeline is empty. Using single point at today.")
+                actual_timeline = [today_date]
+
+        if start_date > ift_expected_max:
+            st.warning(f"Start date ({start_date.strftime('%d-%b-%Y')}) is after max expected date ({ift_expected_max.strftime('%d-%b-%Y')}). Using single point timeline.")
+            expected_timeline = [ift_expected_max]
+        else:
+            expected_timeline = pd.date_range(start=start_date, end=ift_expected_max, freq='W')
+            if len(expected_timeline) == 0:
+                st.warning("Expected timeline is empty. Using single point at max expected date.")
+                expected_timeline = [ift_expected_max]
 
         # --------------------------
         # 3) BUILD ACTUAL AND EXPECTED CUMULATIVE VALUES
@@ -803,18 +782,6 @@ def main():
         # --------------------------
         # 12) FINAL MILESTONE + STATUS STACKED BAR
         # --------------------------
-        def get_final_milestone(row):
-            if pd.notna(row["Reply By EPC"]) and pd.notna(row["Review By OE"]) and pd.notna(row["Issued by EPC"]) and int(row.get("Flag", 0)) == 1:
-                return "Finalized"
-            elif pd.notna(row["Reply By EPC"]) and pd.notna(row["Review By OE"]) and pd.notna(row["Issued by EPC"]):
-                return "Reply By EPC"
-            elif pd.notna(row["Review By OE"]) and pd.notna(row["Issued by EPC"]):
-                return "Review By OE"
-            elif pd.notna(row["Issued by EPC"]):
-                return "Issued by EPC"
-            else:
-                return "NO ISSUANCE"
-
         df["FinalMilestone"] = df.apply(get_final_milestone, axis=1)
         st.subheader("Documents by Final Milestone (Stacked by Status)")
         group_df = (
@@ -956,15 +923,78 @@ def main():
         # =====================================================================================
         # TAB 2 — REVIEW TIMELINE (doc titles with status in brackets; 2-line tags; selective labeling)
         # =====================================================================================
-
-        # Filter rows where initial submission (Issued by EPC) is not null
-        df_sel = df[df["Issued by EPC"].notna()].copy()
-        if df_sel.empty:
-            st.warning(f"No rows have a non-null Issued by EPC (initial submission). Nothing to plot.")
+        file_extension = CSV_INPUT_PATH.name.split('.')[-1].lower()
+        if file_extension not in ['xlsx', 'xls']:
+            st.info("The **Review Timeline** requires an **Excel** file with a sheet named **'Review Historical record'**.")
             st.stop()
 
-        # Build display label: use Document Title
-        title_col = "Document Title"
+        try:
+            df_hist = pd.read_excel(CSV_INPUT_PATH, sheet_name="Review Historical record")
+        except Exception:
+            st.warning("Could not find a sheet named **'Review Historical record'** in the uploaded Excel file.")
+            st.stop()
+
+        orig_cols = list(df_hist.columns)
+        if len(orig_cols) < 6:
+            st.error("The 'Review Historical record' sheet doesn't have the expected structure (need ≥6 columns).")
+            st.stop()
+
+        base_cols = orig_cols[:4]      # ID, Discipline, Area, Document Title (expected)
+        tail_cols = orig_cols[4:]      # Rev/Reviewed pairs
+
+        # Build Rev/Reviewed pairs using ORIGINAL names, pattern-matching on normalized strings
+        pairs = []
+        used = set()
+        for i, c in enumerate(tail_cols):
+            if i in used:
+                continue
+            if is_rev_col(c):
+                # nearest next "review-like" column
+                j = i + 1
+                found = False
+                while j < len(tail_cols):
+                    if j not in used and is_review_col(tail_cols[j]):
+                        pairs.append((tail_cols[i], tail_cols[j]))
+                        used.add(i); used.add(j)
+                        found = True
+                        break
+                    j += 1
+                if not found and i + 1 < len(tail_cols):
+                    # adjacency fallback
+                    pairs.append((tail_cols[i], tail_cols[i+1]))
+                    used.add(i); used.add(i+1)
+
+        # If still nothing, pair by position (5th with 6th, 7th with 8th, ...)
+        if not pairs:
+            for k in range(0, len(tail_cols), 2):
+                left = tail_cols[k]
+                right = tail_cols[k+1] if k+1 < len(tail_cols) else None
+                if right is not None:
+                    pairs.append((left, right))
+
+        if not pairs:
+            st.error("No valid (RevX, Review/Reviewed) pairs detected.")
+            st.write("Columns from 5th onward:", tail_cols)
+            st.stop()
+
+        with st.expander("Detected column pairs", expanded=False):
+            st.write(pairs)
+
+        # Parse dates in all Rev/Review columns
+        for rev_c, revw_c in pairs:
+            df_hist[rev_c] = df_hist[rev_c].apply(robust_parse_date)
+            df_hist[revw_c] = df_hist[revw_c].apply(robust_parse_date)
+
+        # Filter rows where first Rev column (e.g., Rev0) is not null
+        first_rev_col = pairs[0][0]
+        df_sel = df_hist[df_hist[first_rev_col].notna()].copy()
+        if df_sel.empty:
+            st.warning(f"No rows have a non-null **{first_rev_col}** (initial submission). Nothing to plot.")
+            st.stop()
+
+        # Build display label: use **Document Title only** on the y-axis to make space
+        title_candidates = ["Document Title", "Title", base_cols[min(3, len(base_cols)-1)]]
+        title_col = next((c for c in title_candidates if c in df_sel.columns), title_candidates[-1])
 
         # Select by Title
         st.subheader("Select Documents to Plot")
@@ -978,38 +1008,30 @@ def main():
 
         df_plot = df_sel[df_sel[title_col].astype(str).isin(choices)].copy()
 
-        # Build actual segments (title, rev_tag, submit, review)
+        # Build actual segments (title, rev_tag, submit, review) for ALL pairs
         actual_segments = []
         for _, r in df_plot.iterrows():
             doc_title = str(r.get(title_col, ""))
-            pair_list = [
-                ("Rev0", "Issued by EPC", "Review By OE"),
-                ("Rev1", "Reply By EPC", "Review1"),
-                ("Rev2", "ReSub1", "Review2"),
-                ("Rev3", "ReSub2", "Review3"),
-                ("Rev4", "ReSub3", "Review4"),
-                ("Rev5", "ReSub4", "Review5"),
-                ("Rev6", "ReSub5", None),
-            ]
-            for rev_tag, sub_col, rev_col in pair_list:
-                if sub_col in r:
-                    submit_dt = r.get(sub_col, pd.NaT)
-                    if pd.notna(submit_dt):
-                        review_dt = r.get(rev_col, pd.NaT) if rev_col and rev_col in r else pd.NaT
-                        actual_segments.append({
-                            "title": doc_title,
-                            "rev": rev_tag,
-                            "submit": submit_dt,
-                            "review": review_dt if pd.notna(review_dt) else None
-                        })
+            for rev_c, revw_c in pairs:
+                submit_dt = r.get(rev_c, pd.NaT)
+                review_dt = r.get(revw_c, pd.NaT)
+                if pd.notna(submit_dt):
+                    m = re.findall(r'\d+', normalize_header(rev_c))
+                    rev_tag = f"Rev{m[0]}" if m else normalize_header(rev_c)
+                    actual_segments.append({
+                        "title": doc_title,
+                        "rev": rev_tag,
+                        "submit": submit_dt,
+                        "review": review_dt if pd.notna(review_dt) else None
+                    })
 
         if not actual_segments:
             st.warning("No valid submission dates found to plot.")
             st.stop()
 
-        # Build expected segments from main sheet (Issuance Expected, Expected review, Final Issuance Expected)
+        # Build expected segments from first sheet (Issuance Expected, Expected review, Final Issuance Expected)
         expected_segments = []
-        df_expected = df[df["Document Title"].astype(str).isin(choices)].copy()
+        df_expected = df[df["Document Title"].astype(str).isin(choices)].drop_duplicates(subset=["Document Title"])  # Ensure unique titles
         for _, r in df_expected.iterrows():
             doc_title = str(r["Document Title"])
             ifr_exp = robust_parse_date(r["Issuance Expected"])
@@ -1024,7 +1046,7 @@ def main():
                 })
 
         if not expected_segments:
-            st.warning("No valid expected dates found for selected documents.")
+            st.warning("No valid expected dates found for selected documents in the first sheet.")
             # Proceed with actual segments only
 
         # y-axis (one row per document title with status in brackets)
